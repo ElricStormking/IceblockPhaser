@@ -1,0 +1,1008 @@
+class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'GameScene' });
+        
+        this.SLINGSHOT_X = 150;
+        this.SLINGSHOT_Y = 450;
+        this.MAX_DRAG_DISTANCE = 100;
+        this.SHOT_POWER = 0.2;
+        this.MAX_SHOTS = 5;
+        this.shotsRemaining = this.MAX_SHOTS;
+        this.isAiming = false;
+        this.revealPercentage = 0;
+        this.targetPercentage = 80;
+        
+        // Bomb types
+        this.BOMB_TYPES = {
+            BLAST: 'blast_bomb',
+            PIERCER: 'piercer_bomb',
+            CLUSTER: 'cluster_bomb'
+        };
+        
+        // Current selected bomb type
+        this.currentBombType = this.BOMB_TYPES.BLAST;
+        
+        // Debug mode for testing
+        this.debugMode = true;
+    }
+
+    create() {
+        try {
+            // Setup world physics
+            this.matter.world.setBounds(0, 0, this.cameras.main.width, this.cameras.main.height);
+            this.matter.world.setGravity(0, 1);
+
+            // Create game objects
+            this.createBackground();
+            this.createSlingshot();
+            this.createTargets();
+            
+            // Create UI before resetting bomb
+            this.createUI();
+            
+            // Reset bomb and prepare for first shot
+            this.resetBomb();
+            
+            // Setup input handlers
+            this.setupInputHandlers();
+            
+            // Debug text display
+            if (this.debugMode) {
+                this.debugText = this.add.text(10, 10, 'Debug: Ready', { 
+                    font: '16px Arial', 
+                    fill: '#ffffff' 
+                });
+            }
+            
+            console.log("GameScene created successfully");
+        } catch (error) {
+            console.error("Error in create:", error);
+        }
+    }
+
+    createBackground() {
+        try {
+            // Add background
+            this.add.image(400, 300, 'background');
+            
+            // Add the chibi image at the center of play area
+            this.chibiImage = this.add.image(450, 300, 'chibi');
+            this.chibiImage.setAlpha(0.5);
+            
+            // Create a mask for the image - initially all covered
+            this.revealMask = this.make.graphics();
+            this.revealMask.fillStyle(0xffffff);
+            this.revealMask.fillRect(0, 0, 800, 600);
+            
+            // Apply the mask to the chibi image
+            const mask = this.revealMask.createGeometryMask();
+            this.chibiImage.setMask(mask);
+            
+            // Track total pixels of the chibi image for percentage calculation
+            const chibiWidth = this.chibiImage.width;
+            const chibiHeight = this.chibiImage.height;
+            this.totalImagePixels = chibiWidth * chibiHeight;
+            this.revealedPixels = 0;
+        } catch (error) {
+            console.error("Error in createBackground:", error);
+        }
+    }
+
+    createIceBlocks() {
+        this.iceBlocks = [];
+        const blockSize = 40;
+        
+        // Calculate grid based on chibi image position
+        const imageX = 450 - this.chibiImage.width / 2;
+        const imageY = 300 - this.chibiImage.height / 2;
+        const imageWidth = this.chibiImage.width;
+        const imageHeight = this.chibiImage.height;
+        
+        const cols = Math.ceil(imageWidth / blockSize);
+        const rows = Math.ceil(imageHeight / blockSize);
+        
+        // Create a slightly irregular pattern for more interesting gameplay
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                // Skip some blocks randomly for a more natural look
+                if (Math.random() < 0.2) continue;
+                
+                const x = imageX + col * blockSize + blockSize / 2;
+                const y = imageY + row * blockSize + blockSize / 2;
+                
+                const block = this.matter.add.image(x, y, 'iceBlock', null, {
+                    isStatic: true,
+                    friction: 0.01,
+                    restitution: 0.3
+                });
+                
+                // Set a slight random rotation for some blocks
+                if (Math.random() < 0.3) {
+                    block.setRotation(Math.random() * 0.2 - 0.1);
+                }
+                
+                block.setAlpha(0.8);
+                block.isActive = true;
+                
+                this.iceBlocks.push(block);
+            }
+        }
+    }
+
+    createSlingshot() {
+        try {
+            this.slingshot = this.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y, 'slingshot');
+            this.slingshot.setOrigin(0.5, 0.9); // Adjust origin to bottom center
+            
+            // Add elastic line for slingshot
+            this.elasticLine = this.add.graphics();
+        } catch (error) {
+            console.error("Error in createSlingshot:", error);
+        }
+    }
+
+    createBomb() {
+        console.log("Creating bomb");
+        
+        // Create inactive bomb at slingshot position - simple settings
+        this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 'bomb', null);
+        
+        this.bomb.setCircle();
+        this.bomb.setStatic(true);
+        this.bomb.setVisible(true);
+        
+        if (this.debugMode) {
+            console.log("Bomb created:", this.bomb);
+        }
+    }
+
+    setupInput() {
+        try {
+            // Pointer down event
+            this.input.on('pointerdown', (pointer) => {
+                try {
+                    if (this.shotsRemaining <= 0 || !this.bomb || !this.bomb.visible) return;
+                    
+                    // Check if click is near the bomb
+                    const distance = Phaser.Math.Distance.Between(
+                        pointer.x, pointer.y, 
+                        this.bomb.x, this.bomb.y
+                    );
+                    
+                    if (distance < 50) {
+                        this.isAiming = true;
+                        
+                        // Keep the bomb static during aiming - we'll manually position it
+                        this.bomb.setStatic(true);
+                        
+                        if (this.debugMode && this.debugText) {
+                            console.log('Aiming started');
+                            this.debugText.setText(`Aiming started at ${pointer.x},${pointer.y}`);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error in pointerdown handler:", error);
+                }
+            });
+            
+            // Pointer move event
+            this.input.on('pointermove', (pointer) => {
+                try {
+                    if (!this.isAiming || !this.bomb) return;
+                    
+                    // Calculate angle and distance from slingshot
+                    const dx = this.SLINGSHOT_X - pointer.x;
+                    const dy = this.SLINGSHOT_Y - 30 - pointer.y; // Update to match bomb's initial position
+                    const distance = Math.min(
+                        this.MAX_DRAG_DISTANCE,
+                        Math.sqrt(dx * dx + dy * dy)
+                    );
+                    
+                    // Calculate angle
+                    const angle = Math.atan2(dy, dx);
+                    
+                    // Calculate bomb position
+                    const bombX = this.SLINGSHOT_X - distance * Math.cos(angle);
+                    const bombY = (this.SLINGSHOT_Y - 30) - distance * Math.sin(angle);
+                    
+                    // Update bomb position - keep it static while dragging
+                    this.bomb.setPosition(bombX, bombY);
+                    
+                    if (this.debugMode && this.debugText) {
+                        this.debugText.setText(`Aiming: position=${bombX.toFixed(1)},${bombY.toFixed(1)} | dx=${dx.toFixed(1)},dy=${dy.toFixed(1)}`);
+                    }
+                    
+                    // Draw elastic line
+                    if (this.elasticLine) {
+                        this.elasticLine.clear();
+                        this.elasticLine.lineStyle(3, 0xFF0000);
+                        this.elasticLine.beginPath();
+                        this.elasticLine.moveTo(this.SLINGSHOT_X - 10, this.SLINGSHOT_Y - 30);
+                        this.elasticLine.lineTo(bombX, bombY);
+                        this.elasticLine.moveTo(this.SLINGSHOT_X + 10, this.SLINGSHOT_Y - 30);
+                        this.elasticLine.lineTo(bombX, bombY);
+                        this.elasticLine.stroke();
+                    }
+                } catch (error) {
+                    console.error("Error in pointermove handler:", error);
+                }
+            });
+            
+            // Pointer up event
+            this.input.on('pointerup', () => {
+                try {
+                    if (!this.isAiming || !this.bomb) return;
+                    
+                    // Calculate force based on distance from slingshot
+                    const dx = this.SLINGSHOT_X - this.bomb.x;
+                    const dy = (this.SLINGSHOT_Y - 30) - this.bomb.y;
+                    
+                    // Scale by shot power
+                    const forceX = dx * this.SHOT_POWER * 0.01;
+                    const forceY = dy * this.SHOT_POWER * 0.01;
+                    
+                    if (this.debugMode && this.debugText) {
+                        console.log('Launching bomb with force:', forceX, forceY);
+                        this.debugText.setText(`Launch: force=${forceX.toFixed(3)},${forceY.toFixed(3)}`);
+                    }
+                    
+                    // Clear elastic line
+                    if (this.elasticLine) this.elasticLine.clear();
+                    
+                    try {
+                        // Store current bomb position and type
+                        const bombX = this.bomb.x;
+                        const bombY = this.bomb.y;
+                        const bombType = this.currentBombType;
+                        
+                        // Remove the old static bomb
+                        this.bomb.destroy();
+                        
+                        // Create a new dynamic bomb at the same position
+                        this.createDynamicBomb(bombX, bombY, bombType, forceX, forceY);
+                        
+                        // Decrement shots
+                        this.shotsRemaining--;
+                        this.events.emit('updateShots', this.shotsRemaining);
+                        
+                        // Reset aiming flag
+                        this.isAiming = false;
+                        
+                        // Set timeout to create a new bomb if shots remain
+                        this.time.delayedCall(3000, () => {
+                            if (this.shotsRemaining > 0) {
+                                if (!this.bomb) {
+                                    this.resetBomb();
+                                }
+                            } else {
+                                this.checkLevelCompletion();
+                            }
+                        });
+                    }
+                    catch (error) {
+                        console.error("Error launching bomb:", error);
+                        if (this.debugText) this.debugText.setText(`ERROR: ${error.message}`);
+                        
+                        // Try to recover
+                        this.resetBomb();
+                    }
+                } catch (error) {
+                    console.error("Error in pointerup handler:", error);
+                }
+            });
+        } catch (error) {
+            console.error("Error in setupInput:", error);
+        }
+    }
+
+    setupCollisions() {
+        try {
+            // Set up collision between bomb and ice blocks
+            this.matter.world.on('collisionstart', (event) => {
+                if (!event || !event.pairs) {
+                    console.error("Invalid collision event:", event);
+                    return;
+                }
+                
+                if (this.debugMode && this.debugText) {
+                    console.log("Collision detected:", event.pairs.length, "collisions");
+                }
+                
+                const pairs = event.pairs;
+                let hasExploded = false;
+                
+                for (let i = 0; i < pairs.length; i++) {
+                    try {
+                        const bodyA = pairs[i].bodyA;
+                        const bodyB = pairs[i].bodyB;
+                        
+                        if (!bodyA || !bodyB) continue;
+                        
+                        // Find the bomb and block objects from the collision
+                        let bombBody, blockBody;
+                        
+                        if (bodyA.gameObject === this.bomb) {
+                            bombBody = bodyA;
+                            blockBody = bodyB;
+                        } else if (bodyB.gameObject === this.bomb) {
+                            bombBody = bodyB;
+                            blockBody = bodyA;
+                        } else {
+                            // Neither body is the bomb, so skip this pair
+                            continue;
+                        }
+                        
+                        // Make sure blockBody has a gameObject
+                        if (!blockBody.gameObject) {
+                            if (this.debugMode) {
+                                console.log("Collision with non-gameObject body (probably a boundary)");
+                            }
+                            continue;
+                        }
+                        
+                        // Skip if the block is already inactive
+                        const block = blockBody.gameObject;
+                        if (block && !block.isActive) {
+                            continue;
+                        }
+                        
+                        // Get the bomb type (default to BLAST if not set)
+                        const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
+                        
+                        // Only create one explosion per collision sequence
+                        if (!hasExploded) {
+                            // Handle bomb behavior based on type
+                            switch(bombType) {
+                                case this.BOMB_TYPES.PIERCER:
+                                    this.handlePiercerBomb(this.bomb.x, this.bomb.y);
+                                    break;
+                                    
+                                case this.BOMB_TYPES.CLUSTER:
+                                    this.handleClusterBomb(this.bomb.x, this.bomb.y);
+                                    break;
+                                    
+                                case this.BOMB_TYPES.BLAST:
+                                default:
+                                    this.handleBlastBomb(this.bomb.x, this.bomb.y);
+                                    break;
+                            }
+                            
+                            hasExploded = true;
+                            
+                            // Destroy the bomb
+                            if (this.bomb) {
+                                this.bomb.destroy();
+                                this.bomb = null;
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Error processing collision pair:", error);
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error in setupCollisions:", error);
+        }
+    }
+    
+    handleBlastBomb(x, y) {
+        // Standard explosion behavior - radius effect
+        this.createExplosion(x, y);
+        this.destroyBlocksInRadius(x, y, 150);
+    }
+    
+    handlePiercerBomb(x, y) {
+        // Piercer bomb creates a line of destruction in its travel direction
+        const velocity = this.bomb.body.velocity;
+        
+        // Normalize velocity to get direction
+        const magnitude = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+        const dirX = magnitude > 0 ? velocity.x / magnitude : 0;
+        const dirY = magnitude > 0 ? velocity.y / magnitude : 1;
+        
+        // Create a narrower but longer explosion effect
+        const lineLength = 300;
+        
+        // Create visual effect - smaller explosion
+        this.createExplosion(x, y);
+        
+        // Create piercing line particles
+        const particles = this.add.particles('particle');
+        const emitter = particles.createEmitter({
+            speed: { min: 20, max: 50 },
+            scale: { start: 0.5, end: 0 },
+            alpha: { start: 0.8, end: 0 },
+            lifespan: 500,
+            blendMode: 'ADD',
+            tint: 0x77aaff // Blue tint to match the bomb
+        });
+        
+        // Emit along the trajectory line
+        for (let i = 0; i < lineLength; i += 10) {
+            const pointX = x + dirX * i;
+            const pointY = y + dirY * i;
+            emitter.explode(3, pointX, pointY);
+            
+            // Destroy blocks along the line
+            this.destroyBlocksInRadius(pointX, pointY, 30);
+        }
+        
+        // Clean up particles
+        this.time.delayedCall(500, () => {
+            particles.destroy();
+        });
+    }
+    
+    handleClusterBomb(x, y) {
+        // Cluster bomb creates multiple smaller explosions
+        
+        // Create main explosion (smaller than blast bomb)
+        this.createExplosion(x, y);
+        this.destroyBlocksInRadius(x, y, 100);
+        
+        // Create 3-5 smaller explosions around the main one
+        const numClusters = Phaser.Math.Between(3, 5);
+        const clusterRadius = 150;
+        
+        for (let i = 0; i < numClusters; i++) {
+            // Calculate random positions around the main explosion
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 70 + Math.random() * clusterRadius;
+            const clusterX = x + Math.cos(angle) * distance;
+            const clusterY = y + Math.sin(angle) * distance;
+            
+            // Add delay based on distance from center
+            const delay = distance * 2;
+            
+            // Create delayed cluster explosion
+            this.time.delayedCall(delay, () => {
+                // Create mini explosion
+                this.createMiniExplosion(clusterX, clusterY);
+                // Destroy blocks in smaller radius
+                this.destroyBlocksInRadius(clusterX, clusterY, 70);
+            });
+        }
+    }
+    
+    createMiniExplosion(x, y) {
+        // Create smaller visual explosion effect
+        const explosion = this.add.circle(x, y, 40, 0xffdd44, 0.7);
+        
+        // Animate the explosion
+        this.tweens.add({
+            targets: explosion,
+            alpha: 0,
+            scale: 1.5,
+            duration: 200,
+            ease: 'Power2',
+            onComplete: () => {
+                explosion.destroy();
+            }
+        });
+        
+        // Add some particles for more effect
+        const particles = this.add.particles('mini_particle');
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 30, max: 150 },
+            scale: { start: 1, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 600,
+            blendMode: 'ADD'
+        });
+        
+        // Emit particles at explosion point
+        emitter.explode(20, x, y);
+        
+        // Destroy the particle system after emissions complete
+        this.time.delayedCall(700, () => {
+            particles.destroy();
+        });
+        
+        // Add a small camera shake
+        this.cameras.main.shake(150, 0.005);
+    }
+
+    destroyBlocksInRadius(x, y, radius) {
+        if (!this.iceBlocks) return;
+        
+        // Create a list to track blocks to be destroyed
+        const blocksToDestroy = [];
+        
+        // Check distance of each block from explosion center
+        this.iceBlocks.forEach(block => {
+            if (block && block.isActive) {
+                const distance = Phaser.Math.Distance.Between(x, y, block.x, block.y);
+                
+                if (distance < radius) {
+                    // Calculate delay based on distance (closer blocks explode faster)
+                    const delay = (distance / radius) * 100;
+                    blocksToDestroy.push({ block, delay });
+                }
+            }
+        });
+        
+        // Process block destruction with delays
+        blocksToDestroy.forEach(({ block, delay }) => {
+            this.time.delayedCall(delay, () => {
+                if (block && block.isActive) {
+                    this.destroyIceBlock(block);
+                }
+            });
+        });
+        
+        // Clean up the iceBlocks array after a delay
+        this.time.delayedCall(1000, () => {
+            this.cleanupIceBlocksArray();
+        });
+    }
+    
+    cleanupIceBlocksArray() {
+        if (!this.iceBlocks) return;
+        
+        // Filter out inactive blocks
+        this.iceBlocks = this.iceBlocks.filter(block => {
+            return block && block.isActive;
+        });
+        
+        if (this.debugMode) {
+            console.log(`Cleaned up ice blocks array. Remaining blocks: ${this.iceBlocks.length}`);
+        }
+    }
+
+    destroyIceBlock(block) {
+        // Mark block as inactive
+        block.isActive = false;
+        
+        // Create shatter effect
+        this.createBlockShatter(block);
+        
+        // Remove the physics body from the world
+        if (block.body) {
+            this.matter.world.remove(block.body);
+        }
+        
+        // Hide the original block
+        block.setVisible(false);
+        
+        // Update the reveal mask
+        this.revealMask.fillStyle(0x000000, 0);
+        this.revealMask.fillRect(
+            block.x - block.displayWidth/2,
+            block.y - block.displayHeight/2,
+            block.displayWidth,
+            block.displayHeight
+        );
+        
+        // Update revealed percentage
+        const blockPixels = block.displayWidth * block.displayHeight;
+        this.revealedPixels += blockPixels;
+        this.revealPercentage = Math.min(100, Math.floor((this.revealedPixels / this.totalImagePixels) * 100));
+        
+        // Emit update to UI
+        this.events.emit('updatePercentage', this.revealPercentage);
+        
+        // Check if level is complete
+        if (this.revealPercentage >= this.targetPercentage) {
+            this.checkLevelCompletion();
+        }
+    }
+    
+    createBlockShatter(block) {
+        // Create 4-8 smaller pieces at the block's position
+        const numPieces = Phaser.Math.Between(4, 8);
+        const blockSize = block.displayWidth / 2; // Pieces are half the size
+        
+        for (let i = 0; i < numPieces; i++) {
+            // Randomize position slightly around the original block
+            const offsetX = Phaser.Math.Between(-10, 10);
+            const offsetY = Phaser.Math.Between(-10, 10);
+            
+            // Create a smaller piece
+            const piece = this.matter.add.image(
+                block.x + offsetX,
+                block.y + offsetY,
+                'iceBlock',
+                null,
+                {
+                    restitution: 0.8,
+                    friction: 0.01,
+                    density: 0.001
+                }
+            );
+            
+            // Scale down the piece
+            piece.setScale(0.3 + Math.random() * 0.2); // Random size between 0.3 and 0.5 of original
+            
+            // Apply random rotation
+            piece.setRotation(Math.random() * Math.PI * 2);
+            
+            // Apply random velocity
+            const velX = Phaser.Math.Between(-5, 5);
+            const velY = Phaser.Math.Between(-5, 2);
+            piece.setVelocity(velX, velY);
+            
+            // Make pieces semi-transparent
+            piece.setAlpha(0.7);
+            
+            // Destroy the piece after delay
+            this.time.delayedCall(1500 + Math.random() * 1000, () => {
+                if (piece && piece.scene) {
+                    piece.destroy();
+                }
+            });
+        }
+    }
+    
+    createExplosion(x, y) {
+        // Create visual explosion effect
+        const explosion = this.add.circle(x, y, 80, 0xff5500, 0.8);
+        
+        // Animate the explosion
+        this.tweens.add({
+            targets: explosion,
+            alpha: 0,
+            scale: 2,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => {
+                explosion.destroy();
+            }
+        });
+        
+        // Add some particles for more effect
+        const particles = this.add.particles('particle');
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 50, max: 200 },
+            scale: { start: 1, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 800,
+            blendMode: 'ADD'
+        });
+        
+        // Emit particles at explosion point
+        emitter.explode(30, x, y);
+        
+        // Create a flash effect
+        const flash = this.add.circle(x, y, 100, 0xffffff, 1);
+        this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            duration: 200,
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Destroy the particle system after emissions complete
+        this.time.delayedCall(1000, () => {
+            particles.destroy();
+        });
+        
+        // Add a camera shake effect
+        this.cameras.main.shake(300, 0.01);
+        
+        // Add explosion sound if available
+        if (this.sound && this.sound.add) {
+            try {
+                const explosionSound = this.sound.add('explosion');
+                explosionSound.play({ volume: 0.5 });
+            } catch (e) {
+                console.log("Sound not available:", e);
+            }
+        }
+    }
+
+    checkLevelCompletion() {
+        if (this.revealPercentage >= this.targetPercentage) {
+            // Level complete
+            this.time.delayedCall(1000, () => {
+                this.scene.pause();
+                this.events.emit('levelComplete', {
+                    result: 'win',
+                    percentage: this.revealPercentage,
+                    shotsRemaining: this.shotsRemaining
+                });
+            });
+        } else if (this.shotsRemaining <= 0) {
+            // Level failed
+            this.time.delayedCall(1000, () => {
+                this.scene.pause();
+                this.events.emit('levelComplete', {
+                    result: 'lose',
+                    percentage: this.revealPercentage,
+                    shotsRemaining: 0
+                });
+            });
+        }
+    }
+
+    resetBomb() {
+        try {
+            // Remove the old bomb if it exists
+            if (this.bomb) {
+                this.bomb.destroy();
+            }
+            
+            // Create a new bomb at the slingshot position
+            // Position it correctly in the pocket of the slingshot
+            this.bomb = this.matter.add.image(
+                this.SLINGSHOT_X, 
+                this.SLINGSHOT_Y - 30, 
+                this.currentBombType
+            );
+            
+            // Set the bomb's physical properties
+            this.bomb.setCircle(14);
+            this.bomb.setBounce(0.6);
+            this.bomb.setFriction(0.005);
+            this.bomb.setDensity(0.005);
+            this.bomb.setStatic(true); // Keep it static until user starts dragging
+            
+            // Reset tracking variables
+            this.isDragging = false;
+            this.bombFired = false;
+            this.bombReady = true;
+            
+            // Update UI with remaining bombs and score
+            this.updateUI();
+            
+            // Update debug text
+            if (this.debugText) {
+                this.debugText.setText(`Bomb reset - Ready for firing`);
+            }
+            
+            console.log("Bomb reset successfully");
+        } catch (error) {
+            console.error("Error in resetBomb:", error);
+        }
+    }
+    
+    updateUI() {
+        try {
+            if (this.ui && typeof this.ui.setTexts === 'function') {
+                this.ui.setTexts(`Bombs: ${this.shotsRemaining}`, `Score: ${this.score}`);
+            }
+        } catch (error) {
+            console.error("Error updating UI:", error);
+        }
+    }
+    
+    createDynamicBomb(x, y, bombType, forceX, forceY) {
+        // Set bomb properties based on type
+        let bombProperties = {
+            restitution: 0.7,
+            friction: 0.05,
+            density: 0.002,
+            frictionAir: 0.001
+        };
+        
+        // Adjust properties for special bomb types
+        switch(bombType) {
+            case this.BOMB_TYPES.PIERCER:
+                // Piercer has lower friction and higher density
+                bombProperties.friction = 0.01;
+                bombProperties.frictionAir = 0.0005;
+                bombProperties.density = 0.003;
+                break;
+                
+            case this.BOMB_TYPES.CLUSTER:
+                // Cluster is a bit lighter
+                bombProperties.density = 0.0015;
+                break;
+        }
+        
+        // Create the bomb with appropriate properties
+        this.bomb = this.matter.add.image(x, y, bombType, null, bombProperties);
+        this.bomb.setCircle();
+        this.bomb.bombType = bombType; // Store the bomb type for later use
+        
+        // Apply impulse (instant force)
+        this.matter.body.applyForce(this.bomb.body, 
+            { x: x, y: y }, 
+            { x: forceX, y: forceY });
+        
+        // Fallback: try direct velocity set if needed
+        if (this.debugMode) {
+            this.time.delayedCall(100, () => {
+                if (this.bomb && this.bomb.body && 
+                    Math.abs(this.bomb.body.velocity.x) < 0.1 && 
+                    Math.abs(this.bomb.body.velocity.y) < 0.1) {
+                    console.log("Force didn't work, trying velocity directly");
+                    const dx = this.SLINGSHOT_X - x;
+                    const dy = (this.SLINGSHOT_Y - 30) - y;
+                    this.bomb.setVelocity(dx * 0.2, dy * 0.2);
+                }
+            });
+        }
+    }
+
+    createTargets() {
+        try {
+            // Create ice blocks that will serve as targets to break
+            this.createIceBlocks();
+            
+            // Setup collision detection for the targets
+            this.setupCollisions();
+            
+            console.log("Targets created successfully");
+        } catch (error) {
+            console.error("Error in createTargets:", error);
+        }
+    }
+    
+    setupInputHandlers() {
+        try {
+            // Setup user input for the slingshot and bomb
+            this.setupInput();
+            
+            console.log("Input handlers setup successfully");
+        } catch (error) {
+            console.error("Error in setupInputHandlers:", error);
+        }
+    }
+
+    createUI() {
+        try {
+            this.initializeUI();
+            
+            // Add bomb selector UI
+            this.createBombSelector();
+        } catch (error) {
+            console.error("Error in createUI:", error);
+        }
+    }
+    
+    initializeUI() {
+        try {
+            // Create UI component
+            this.ui = new UI(this);
+            this.ui.create();
+            this.updateUI();
+            console.log("UI created successfully");
+        } catch (error) {
+            console.error("Error initializing UI:", error);
+        }
+    }
+    
+    resetLevel() {
+        this.shotsRemaining = this.MAX_SHOTS;
+        this.revealPercentage = 0;
+        this.revealedPixels = 0;
+        
+        // Reset mask
+        this.revealMask.clear();
+        this.revealMask.fillStyle(0xffffff);
+        this.revealMask.fillRect(0, 0, 800, 600);
+        
+        // Reset bomb
+        this.resetBomb();
+        
+        // Update UI
+        this.events.emit('updateShots', this.shotsRemaining);
+        this.events.emit('updatePercentage', this.revealPercentage);
+    }
+    
+    update() {
+        try {
+            // Skip if the bomb is static or doesn't exist
+            if (!this.bomb || this.bomb.isStatic) return;
+            
+            // Check if bomb is out of bounds
+            if (this.bomb.y > 600 || this.bomb.x < 0 || this.bomb.x > 800) {
+                if (this.debugMode && this.debugText) {
+                    console.log("Bomb out of bounds, resetting", this.bomb.x, this.bomb.y);
+                    this.debugText.setText(`Bomb out of bounds at ${this.bomb.x.toFixed(1)},${this.bomb.y.toFixed(1)}`);
+                }
+                
+                // Reset for next shot if we have shots remaining
+                if (this.shotsRemaining > 0) {
+                    this.resetBomb();
+                } else {
+                    this.checkLevelCompletion();
+                }
+                return;
+            }
+            
+            // If bomb is in motion, update debug info
+            if (this.debugMode && this.debugText) {
+                // Get current velocity
+                const velocity = this.bomb.body.velocity;
+                
+                // Update debug text with position and velocity
+                this.debugText.setText(
+                    `Bomb: pos=${this.bomb.x.toFixed(1)},${this.bomb.y.toFixed(1)} | ` +
+                    `vel=${velocity.x.toFixed(2)},${velocity.y.toFixed(2)}`
+                );
+                
+                // If bomb is very slow/stuck, prod it a bit
+                if (Math.abs(velocity.x) < 0.1 && Math.abs(velocity.y) < 0.1 && 
+                    !this.bomb.isStatic && this.bomb.y < 580) {
+                    console.log("Bomb seems stuck, applying small impulse");
+                    this.matter.body.applyForce(this.bomb.body, 
+                        { x: this.bomb.x, y: this.bomb.y }, 
+                        { x: 0, y: 0.001 });
+                }
+            }
+        } catch (error) {
+            console.error("Error in update:", error);
+            if (this.debugText) {
+                this.debugText.setText(`ERROR: ${error.message}`);
+            }
+        }
+    }
+    
+    init(data) {
+        try {
+            // Initialize game state
+            this.score = 0;
+            this.bombsRemaining = 5;
+            this.targetsRemaining = 10;
+            this.bombFired = false;
+            this.bombReady = false;
+            this.isDragging = false;
+            this.gameOver = false;
+            
+            // Debug settings
+            this.debugMode = true;
+            this.debugText = null;
+            
+            // Store any data passed from previous scene
+            this.sceneData = data || {};
+            
+            // Initialize UI reference
+            this.ui = null;
+            
+            console.log("GameScene initialized with data:", data);
+        } catch (error) {
+            console.error("Error in init:", error);
+        }
+    }
+
+    createBombSelector() {
+        // Create bomb selection buttons
+        const buttonY = 520;
+        const spacing = 60;
+        
+        // Blast bomb button
+        this.blastButton = this.add.image(this.cameras.main.width - 150, buttonY, 'blast_bomb');
+        this.blastButton.setInteractive();
+        this.blastButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.BLAST));
+        
+        // Piercer bomb button
+        this.piercerButton = this.add.image(this.cameras.main.width - 150 + spacing, buttonY, 'piercer_bomb');
+        this.piercerButton.setInteractive();
+        this.piercerButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.PIERCER));
+        
+        // Cluster bomb button
+        this.clusterButton = this.add.image(this.cameras.main.width - 150 + spacing * 2, buttonY, 'cluster_bomb');
+        this.clusterButton.setInteractive();
+        this.clusterButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.CLUSTER));
+        
+        // Default selection
+        this.updateBombSelection();
+    }
+    
+    selectBombType(bombType) {
+        this.currentBombType = bombType;
+        this.updateBombSelection();
+        
+        // If there's a bomb on the slingshot, update its texture
+        if (this.bomb && this.bomb.body.isStatic) {
+            this.bomb.setTexture(this.currentBombType);
+        }
+    }
+    
+    updateBombSelection() {
+        // Update button appearances to show selection
+        this.blastButton.setScale(this.currentBombType === this.BOMB_TYPES.BLAST ? 1.2 : 1);
+        this.piercerButton.setScale(this.currentBombType === this.BOMB_TYPES.PIERCER ? 1.2 : 1);
+        this.clusterButton.setScale(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 1.2 : 1);
+        
+        // Add glow to selected bomb
+        this.blastButton.setTint(this.currentBombType === this.BOMB_TYPES.BLAST ? 0xffffff : 0xaaaaaa);
+        this.piercerButton.setTint(this.currentBombType === this.BOMB_TYPES.PIERCER ? 0xffffff : 0xaaaaaa);
+        this.clusterButton.setTint(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 0xffffff : 0xaaaaaa);
+    }
+}

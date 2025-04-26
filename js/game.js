@@ -16,6 +16,16 @@ const config = {
             }
         }
     },
+    render: {
+        antialias: true,
+        pixelArt: false,
+        roundPixels: false,
+        transparent: false,
+        clearBeforeRender: true,
+        premultipliedAlpha: true,
+        preserveDrawingBuffer: false,
+        willReadFrequently: true // Add this option for better performance with frequent pixel operations
+    },
     scene: [
         BootScene,
         MainMenuScene,

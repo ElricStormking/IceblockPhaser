@@ -64,76 +64,24 @@ class BootScene extends Phaser.Scene {
     }
     
     createShapes() {
-        // Create a blue background
-        const background = this.add.graphics();
-        background.fillStyle(0x4488aa, 1);
+        // Create a simple blue background for startup screens
+        const background = this.add.graphics({ willReadFrequently: true });
+        background.fillStyle(0x000000, 1); // Black background
         background.fillRect(0, 0, 1920, 1080);
         background.generateTexture('background', 1920, 1080);
         background.clear();
         
-        // Create a placeholder chibi image (simple cartoon character)
-        const chibi = this.add.graphics();
-        
-        // Create a larger canvas for the 800x1080 chibi
-        chibi.fillStyle(0x000000, 0); // Transparent background
-        chibi.fillRect(0, 0, 800, 1080);
-        
-        // Scale proportions for the larger size
-        const centerX = 400;
-        const centerY = 400;
-        const headSize = 250;
-        
-        // Pink circle for the head
-        chibi.fillStyle(0xff99cc, 1);
-        chibi.fillCircle(centerX, centerY, headSize);
-        
-        // Add a face
-        chibi.fillStyle(0x000000, 1);
-        chibi.fillCircle(centerX - 80, centerY - 50, 25); // Left eye
-        chibi.fillCircle(centerX + 80, centerY - 50, 25); // Right eye
-        
-        // Add a smile
-        chibi.lineStyle(15, 0x000000, 1);
-        chibi.beginPath();
-        chibi.arc(centerX, centerY + 30, 100, 0, Math.PI, false);
-        chibi.strokePath();
-        
-        // Add simple hair
-        chibi.fillStyle(0x663366, 1);
-        chibi.fillCircle(centerX, centerY - 120, 150);
-        chibi.fillCircle(centerX - 120, centerY - 80, 100);
-        chibi.fillCircle(centerX + 120, centerY - 80, 100);
-        
-        // Add body (simple dress)
-        chibi.fillStyle(0xff99cc, 1);
-        chibi.fillTriangle(
-            centerX, centerY + headSize,  // Top point
-            centerX - 300, centerY + 700, // Bottom left
-            centerX + 300, centerY + 700  // Bottom right
-        );
-        
-        // Add arms
-        chibi.fillStyle(0xff99cc, 1);
-        // Left arm
-        chibi.fillRect(centerX - 320, centerY + 100, 80, 300);
-        // Right arm
-        chibi.fillRect(centerX + 240, centerY + 100, 80, 300);
-        
-        // Generate texture
-        chibi.generateTexture('chibi', 800, 1080);
-        chibi.clear();
-        
         // Create ice block (light blue rectangle with alpha)
-        const iceBlock = this.add.graphics();
-        iceBlock.fillStyle(0xaaddff, 0.7);
+        const iceBlock = this.add.graphics({ willReadFrequently: true });
+        iceBlock.fillStyle(0xaaddff, 0.9);
         iceBlock.fillRect(0, 0, 40, 40);
-        iceBlock.lineStyle(2, 0xffffff, 0.8);
+        iceBlock.lineStyle(2, 0xffffff, 0.9);
         iceBlock.strokeRect(0, 0, 40, 40);
         iceBlock.generateTexture('iceBlock', 40, 40);
         iceBlock.clear();
         
         // Create slingshot (brown Y shape)
-        const slingshot = this.add.graphics();
+        const slingshot = this.add.graphics({ willReadFrequently: true });
         slingshot.fillStyle(0x8B4513, 1);
         slingshot.fillRect(0, 0, 10, 60);  // Base
         slingshot.fillRect(-20, 0, 50, 10); // Top part
@@ -141,7 +89,7 @@ class BootScene extends Phaser.Scene {
         slingshot.clear();
         
         // 1. BLAST GIRL - Regular bomb (pink circle with face)
-        const blastBomb = this.add.graphics();
+        const blastBomb = this.add.graphics({ willReadFrequently: true });
         blastBomb.fillStyle(0xff77aa, 1);
         blastBomb.fillCircle(20, 20, 20);
         blastBomb.fillStyle(0x000000, 1);
@@ -156,7 +104,7 @@ class BootScene extends Phaser.Scene {
         blastBomb.clear();
         
         // 2. PIERCER GIRL - Pointed bomb (pink arrow-shaped)
-        const piercerBomb = this.add.graphics();
+        const piercerBomb = this.add.graphics({ willReadFrequently: true });
         piercerBomb.fillStyle(0x77aaff, 1); // Blue color
         piercerBomb.fillCircle(20, 20, 16);
         // Add arrow point
@@ -174,7 +122,7 @@ class BootScene extends Phaser.Scene {
         piercerBomb.clear();
         
         // 3. CLUSTER GIRL - Multiple bomb (yellow with dots)
-        const clusterBomb = this.add.graphics();
+        const clusterBomb = this.add.graphics({ willReadFrequently: true });
         clusterBomb.fillStyle(0xffdd44, 1); // Yellow color
         clusterBomb.fillCircle(20, 20, 18);
         // Add smaller circles around it
@@ -195,7 +143,7 @@ class BootScene extends Phaser.Scene {
         clusterBomb.clear();
         
         // 4. STICKY GIRL - Sticky bomb (green with goo)
-        const stickyBomb = this.add.graphics();
+        const stickyBomb = this.add.graphics({ willReadFrequently: true });
         stickyBomb.fillStyle(0x66cc66, 1); // Green color
         stickyBomb.fillCircle(20, 20, 18);
         // Add sticky drips
@@ -215,7 +163,7 @@ class BootScene extends Phaser.Scene {
         stickyBomb.clear();
         
         // 5. SHATTERER GIRL - Heavy impact bomb (red with cracks)
-        const shattererBomb = this.add.graphics();
+        const shattererBomb = this.add.graphics({ willReadFrequently: true });
         shattererBomb.fillStyle(0xcc3333, 1); // Red color
         shattererBomb.fillCircle(20, 20, 20);
         // Add crack pattern
@@ -240,28 +188,28 @@ class BootScene extends Phaser.Scene {
         shattererBomb.clear();
         
         // Create particle for explosion effects
-        const particle = this.add.graphics();
+        const particle = this.add.graphics({ willReadFrequently: true });
         particle.fillStyle(0xff5500, 1);
         particle.fillCircle(8, 8, 8);
         particle.generateTexture('particle', 16, 16);
         particle.clear();
         
         // Create smaller particle for cluster bombs
-        const miniParticle = this.add.graphics();
+        const miniParticle = this.add.graphics({ willReadFrequently: true });
         miniParticle.fillStyle(0xffdd44, 1);
         miniParticle.fillCircle(4, 4, 4);
         miniParticle.generateTexture('mini_particle', 8, 8);
         miniParticle.clear();
         
         // Create green sticky particles
-        const stickyParticle = this.add.graphics();
+        const stickyParticle = this.add.graphics({ willReadFrequently: true });
         stickyParticle.fillStyle(0x66cc66, 1);
         stickyParticle.fillCircle(6, 6, 6);
         stickyParticle.generateTexture('sticky_particle', 12, 12);
         stickyParticle.clear();
         
         // Create red impact particles
-        const impactParticle = this.add.graphics();
+        const impactParticle = this.add.graphics({ willReadFrequently: true });
         impactParticle.fillStyle(0xcc3333, 1);
         impactParticle.fillRect(0, 0, 8, 8);
         impactParticle.generateTexture('impact_particle', 8, 8);

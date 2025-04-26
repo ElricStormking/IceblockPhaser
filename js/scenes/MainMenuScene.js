@@ -4,11 +4,8 @@ class MainMenuScene extends Phaser.Scene {
     }
 
     create() {
-        // Add background
-        this.add.image(1920/2, 1080/2, 'background');
-        
-        // Add decorative elements
-        this.addDecorations();
+        // Create a custom background for the main menu
+        this.createMenuBackground();
         
         // Add title
         this.add.text(1920/2, 250, 'Beauty Ice Breaker', {
@@ -18,8 +15,17 @@ class MainMenuScene extends Phaser.Scene {
             strokeThickness: 8
         }).setOrigin(0.5);
         
-        // Add subtitle
-        this.add.text(1920/2, 360, 'Prototype with Simple Shapes', {
+        // Add producer credit right under the title
+        this.add.text(1920/2, 320, 'Produced by Elric Stormking', {
+            font: '32px Arial',
+            fill: '#ff9966',
+            stroke: '#000000',
+            strokeThickness: 4,
+            fontStyle: 'italic'
+        }).setOrigin(0.5);
+        
+        // Add subtitle below producer credit
+        this.add.text(1920/2, 380, 'Prototype with Simple Shapes', {
             font: '36px Arial',
             fill: '#ffffaa',
             stroke: '#000000',
@@ -58,6 +64,32 @@ class MainMenuScene extends Phaser.Scene {
         startButton.on('pointerdown', () => {
             this.scene.start('LoadingScene');
         });
+        
+        // Add decorations
+        this.addDecorations();
+    }
+    
+    createMenuBackground() {
+        // Create a pretty gradient background for menu
+        const bg = this.add.graphics();
+        
+        // Dark blue background
+        bg.fillStyle(0x0a2472, 1);
+        bg.fillRect(0, 0, 1920, 1080);
+        
+        // Add some decorative stars
+        for (let i = 0; i < 100; i++) {
+            const x = Math.random() * 1920;
+            const y = Math.random() * 1080;
+            const size = 1 + Math.random() * 3;
+            
+            // Star color variations (white/blue/cyan)
+            const colors = [0xffffff, 0x00ffff, 0x8080ff];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            bg.fillStyle(color, 0.5 + Math.random() * 0.5);
+            bg.fillCircle(x, y, size);
+        }
     }
     
     addDecorations() {
@@ -70,7 +102,7 @@ class MainMenuScene extends Phaser.Scene {
             
             const block = this.add.image(x, y, 'iceBlock');
             block.setScale(2); // Larger blocks for higher resolution
-            block.setAlpha(0.6);
+            block.setAlpha(0.9); // Increased from 0.6 to 0.9 for less transparency
             block.setRotation(Phaser.Math.Between(-30, 30) * Math.PI / 180);
             
             // Add a tween to make it spin slowly

@@ -400,7 +400,12 @@ Difficulty Progression:
 
 
 Early Levels (1–3): Large, stationary ice blocks; 7–10 shots; simple chibi girl images; 1–3 bomb types available.
-
+Bomb types: 
+5 Sticky Girl
+1 Shatterer Girl
+1 Cluster Girl
+2 Piercer Girl
+3 Blast Girl
 
 
 Mid Levels (4–7): Smaller blocks, some requiring multiple hits; 5–7 shots; 4–7 bomb types.

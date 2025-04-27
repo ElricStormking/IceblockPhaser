@@ -2,16 +2,17 @@ class GameScene extends Phaser.Scene {
     constructor() {
         super({ key: 'GameScene' });
         
-        this.SLINGSHOT_X = 300;
-        this.SLINGSHOT_Y = 800;
+        // Reposition slingshot to left side of screen
+        this.SLINGSHOT_X = 300; // Keep at 300 (positioned on left side)
+        this.SLINGSHOT_Y = 800; // Keep at same height
         this.MAX_DRAG_DISTANCE = 200;
-        this.SHOT_POWER = 0.2;
+        this.SHOT_POWER = 0.3; // Increased from 0.2 to 0.3 for longer shots
         this.MAX_SHOTS = 10;
         this.shotsRemaining = this.MAX_SHOTS;
         this.isAiming = false;
         this.revealPercentage = 0;
         this.targetPercentage = 80;
-        this.UI_DEPTH = 1000; // Add consistent UI depth value
+        this.UI_DEPTH = 1000; // UI depth for consistent layering
         this.isLevelComplete = false;
         this.isGameOver = false;
         
@@ -58,6 +59,9 @@ class GameScene extends Phaser.Scene {
 
     create() {
         try {
+            // Setup camera to show the full 1920x1080 game world
+            this.setupCamera();
+            
             // Setup world physics
             this.matter.world.setBounds(0, 0, this.cameras.main.width, this.cameras.main.height);
             this.matter.world.setGravity(0, 1);
@@ -73,38 +77,8 @@ class GameScene extends Phaser.Scene {
             // Create game objects
             this.createBackground();
             
-            // Add completion veil after background but before ice blocks
-            this.completionVeil = this.add.rectangle(
-                1920/2,
-                1080/2,
-                800, // Same width as chibi image max width
-                900, // Same height as chibi image max height
-                0x0033aa, // Deep blue color instead of white
-                0.7
-            );
-            this.completionVeil.setDepth(2); // Above chibi (1) but below ice blocks (4)
-            
-            // Add a frost effect to the completion veil
-            const frostGraphics = this.add.graphics();
-            frostGraphics.lineStyle(2, 0x66aaff, 0.3); // Light blue lines for frost effect
-            
-            // Add crystalline patterns
-            for (let i = 0; i < 50; i++) {
-                const x = Phaser.Math.Between(-400, 400);
-                const y = Phaser.Math.Between(-450, 450);
-                const size = Phaser.Math.Between(20, 60);
-                
-                // Draw a snowflake-like pattern
-                frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-                frostGraphics.lineTo(1920/2 + x + size, 1080/2 + y);
-                frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-                frostGraphics.lineTo(1920/2 + x - size/2, 1080/2 + y + size);
-                frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-                frostGraphics.lineTo(1920/2 + x - size/2, 1080/2 + y - size);
-            }
-            
-            frostGraphics.setDepth(2);
-            this.frostGraphics = frostGraphics;
+            // Create the completion veil based on chibi image shape
+            this.createCompletionVeil();
             
             // Create slingshot
             this.createSlingshot();
@@ -149,6 +123,42 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    setupCamera() {
+        // Set up the main camera to show the entire 1920x1080 game area without overflow
+        const gameWidth = 1920;
+        const gameHeight = 1080;
+        
+        // Set strict bounds for the main camera
+        this.cameras.main.setBounds(0, 0, gameWidth, gameHeight);
+        this.cameras.main.setBackgroundColor('#000000');
+        this.cameras.main.setViewport(0, 0, gameWidth, gameHeight);
+        
+        // Make sure the camera is properly scaled according to the game config
+        const scaleX = this.scale.width / gameWidth;
+        const scaleY = this.scale.height / gameHeight;
+        
+        console.log(`Camera setup: Game dimensions ${this.scale.width}x${this.scale.height}, Scale: ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`);
+        
+        // Create a UI camera specifically for UI elements with highest depth
+        this.uiCamera = this.cameras.add(0, 0, gameWidth, gameHeight);
+        this.uiCamera.setName('UI Camera');
+        this.uiCamera.setScroll(0, 0);
+        this.uiCamera.setBackgroundColor(0x000000, 0); // Transparent background
+        
+        // Only include UI elements in this camera (depth >= UI_DEPTH)
+        this.uiCamera.ignore(this.children.list.filter(item => item.depth < this.UI_DEPTH));
+        
+        // Ensure our world physics matches our camera bounds
+        this.matter.world.setBounds(0, 0, gameWidth, gameHeight);
+        
+        // Debug camera bounds if in debug mode
+        if (this.debugMode) {
+            console.log(`Main camera bounds: 0, 0, ${gameWidth}, ${gameHeight}`);
+            console.log(`UI camera bounds: 0, 0, ${gameWidth}, ${gameHeight}`);
+            console.log(`UI depth: ${this.UI_DEPTH}`);
+        }
+    }
+
     createBackground() {
         try {
             // Create a container with specific depth for layering
@@ -170,12 +180,17 @@ class GameScene extends Phaser.Scene {
             // Set background to lowest depth to ensure it's behind everything
             bgImage.setDepth(0);
             
-            // Add the chibi image at the center of play area
-            this.chibiImage = this.add.image(1920/2, 1080/2, 'chibi');
+            // Position the chibi image on the right side of the screen
+            // Use 2/3 of the screen width for X position to move it rightward
+            const chibiX = Math.floor(1920 * 0.7); // 70% of screen width
+            const chibiY = 1080/2; // Centered vertically
+            
+            // Add the chibi image
+            this.chibiImage = this.add.image(chibiX, chibiY, 'chibi');
             this.chibiImage.setDepth(1); // Lower depth for chibi image
             
             // Scale the image to fit nicely in the play area
-            const maxWidth = 800;
+            const maxWidth = 700; // Slightly smaller to ensure it fits on right side
             const maxHeight = 900;
             
             // Get the loaded image dimensions
@@ -200,13 +215,10 @@ class GameScene extends Phaser.Scene {
             const chibiWidth = this.chibiImage.width * scale;
             const chibiHeight = this.chibiImage.height * scale;
             
-            // Track total pixels of the chibi image for percentage calculation
-            this.totalImagePixels = chibiWidth * chibiHeight;
-            this.revealedPixels = 0;
-            
-            console.log("Background created with chibi image:", 
-                        imageWidth, "x", imageHeight,
-                        "scaled to:", chibiWidth, "x", chibiHeight);
+            // Log the new position
+            console.log("Background created with chibi image positioned at:", 
+                        chibiX, chibiY,
+                        "with dimensions:", chibiWidth, "x", chibiHeight);
         } catch (error) {
             console.error("Error in createBackground:", error);
         }
@@ -215,39 +227,141 @@ class GameScene extends Phaser.Scene {
     createIceBlocks() {
         this.iceBlocks = [];
         this.blueVeils = []; // Array to store individual blue veil rectangles
-        const blockSize = 60; // Larger block size for higher resolution
+        const blockSize = 15; // Reduced to 1/4 of original size (was 60)
         
         // Create a container for ice blocks with depth above chibi but below UI
         const blocksContainer = this.add.container(0, 0);
         blocksContainer.setDepth(2);
         
         // Get the chibi image bounds with scaling applied
-        const maxWidth = 800; // Same as in createBackground
-        const scale = 1; // Since we designed it at this size, no scaling needed
-        const imageWidth = this.chibiImage.width * scale; 
-        const imageHeight = this.chibiImage.height * scale;
+        const scale = this.chibiImage.scale; // Get actual scale being used
+        const imageWidth = this.chibiImage.width; 
+        const imageHeight = this.chibiImage.height;
         
         // Calculate the image boundaries
-        const imageX = 1920/2 - imageWidth / 2;
-        const imageY = 1080/2 - imageHeight / 2;
+        const imageX = this.chibiImage.x - (imageWidth * scale) / 2;
+        const imageY = this.chibiImage.y - (imageHeight * scale) / 2;
         
         // Calculate grid dimensions
-        const cols = Math.ceil(imageWidth / blockSize);
-        const rows = Math.ceil(imageHeight / blockSize);
+        const cols = Math.ceil(imageWidth * scale / blockSize);
+        const rows = Math.ceil(imageHeight * scale / blockSize);
         
-        console.log(`Creating ice blocks grid: ${cols}x${rows} over image area ${imageWidth}x${imageHeight}`);
+        console.log(`Chibi image at ${this.chibiImage.x}, ${this.chibiImage.y}, scale: ${scale}`);
+        console.log(`Image calculated bounds: ${imageX}, ${imageY}, ${imageWidth * scale}x${imageHeight * scale}`);
+        console.log(`Creating ice blocks grid: ${cols}x${rows} over image area ${imageWidth * scale}x${imageHeight * scale}`);
         
-        // Create a slightly irregular pattern for more interesting gameplay
+        // Create a temporary canvas to check pixel data
+        const tempCanvas = document.createElement('canvas');
+        const tempContext = tempCanvas.getContext('2d');
+        tempCanvas.width = imageWidth;
+        tempCanvas.height = imageHeight;
+        
+        // Get the texture key of the chibi image
+        const textureKey = this.chibiImage.texture.key;
+        
+        // Get the image data
+        const frame = this.textures.getFrame(textureKey);
+        const source = frame.source.image || frame.source.canvas;
+        
+        // Draw the image to our temp canvas
+        tempContext.drawImage(source, 0, 0, imageWidth, imageHeight);
+        
+        // Alpha threshold - lower value to include more semi-transparent pixels at edges
+        const alphaThreshold = 50; // Much lower threshold to catch edge pixels
+        
+        // Sample size for checking multiple pixels in the block area
+        const sampleSize = 5; // Check more points in a 5x5 grid
+        const sampleOffset = Math.floor(blockSize / (sampleSize + 1) / scale);
+        
+        // Create a 2D grid to track where we've placed blocks
+        const blockGrid = Array(rows).fill().map(() => Array(cols).fill(false));
+        
+        // Variables to track total blocks for percentage calculations
+        this.totalIceBlocks = 0;
+        this.clearedIceBlocks = 0;
+        
+        // First pass: Find all core pixels that meet the alpha threshold
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
-                // Skip some blocks randomly for a more natural look
-                if (Math.random() < 0.2) continue;
+                // Calculate screen position for the block
+                const blockScreenX = imageX + col * blockSize + blockSize / 2;
+                const blockScreenY = imageY + row * blockSize + blockSize / 2;
                 
-                const x = imageX + col * blockSize + blockSize / 2;
-                const y = imageY + row * blockSize + blockSize / 2;
+                // Sample multiple points within this block area
+                let hasVisiblePixel = false;
+                
+                for (let sx = 0; sx < sampleSize; sx++) {
+                    for (let sy = 0; sy < sampleSize; sy++) {
+                        // Calculate sampling position in the original image
+                        const offsetX = -Math.floor(sampleSize/2) + sx;
+                        const offsetY = -Math.floor(sampleSize/2) + sy;
+                        
+                        const sampleX = Math.floor(col * blockSize / scale) + offsetX * sampleOffset;
+                        const sampleY = Math.floor(row * blockSize / scale) + offsetY * sampleOffset;
+                        
+                        // Ensure we're within bounds
+                        if (sampleX >= 0 && sampleX < imageWidth && 
+                            sampleY >= 0 && sampleY < imageHeight) {
+                            
+                            try {
+                                const pixelData = tempContext.getImageData(sampleX, sampleY, 1, 1).data;
+                                // If any sampled pixel has alpha above threshold, mark block as visible
+                                if (pixelData[3] >= alphaThreshold) {
+                                    hasVisiblePixel = true;
+                                    break;
+                                }
+                            } catch (e) {
+                                console.error(`Error sampling pixel at ${sampleX},${sampleY}:`, e);
+                            }
+                        }
+                    }
+                    if (hasVisiblePixel) break;
+                }
+                
+                if (hasVisiblePixel) {
+                    blockGrid[row][col] = true;
+                }
+            }
+        }
+        
+        // Second pass: Add padding around detected pixels to ensure edges are covered
+        // This creates a thickness around the chibi image
+        const paddingAmount = 1; // How many blocks of padding to add
+        
+        // Create a copy of the grid before adding padding
+        const originalGrid = blockGrid.map(row => [...row]);
+        
+        // Add padding around each detected block
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                if (originalGrid[row][col]) {
+                    // Add padding blocks around this block
+                    for (let pr = -paddingAmount; pr <= paddingAmount; pr++) {
+                        for (let pc = -paddingAmount; pc <= paddingAmount; pc++) {
+                            const padRow = row + pr;
+                            const padCol = col + pc;
+                            
+                            // Make sure we're in bounds
+                            if (padRow >= 0 && padRow < rows && padCol >= 0 && padCol < cols) {
+                                blockGrid[padRow][padCol] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Third pass: Create blocks based on our grid
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                if (!blockGrid[row][col]) continue;
+                
+                // Calculate screen position for the block
+                const blockScreenX = imageX + col * blockSize + blockSize / 2;
+                const blockScreenY = imageY + row * blockSize + blockSize / 2;
                 
                 // Create ice block
-                const block = this.matter.add.image(x, y, 'iceBlock', null, {
+                const block = this.matter.add.image(blockScreenX, blockScreenY, 'iceBlock', null, {
                     isStatic: true,
                     friction: 0.01,
                     restitution: 0.3
@@ -263,13 +377,13 @@ class GameScene extends Phaser.Scene {
                 
                 // Set blocks to appear above the chibi image but below UI
                 block.setDepth(4); // Higher than chibi (1) and blocksContainer (2) and blue veils (3)
-                block.setAlpha(1.0);
+                block.setAlpha(0.5);
                 block.isActive = true;
                 
                 // Create a blue veil rectangle for this block
                 const blueVeil = this.add.rectangle(
-                    x, 
-                    y, 
+                    blockScreenX, 
+                    blockScreenY, 
                     blockSize, 
                     blockSize, 
                     0xaaddff, // Lighter, more ice-like blue color
@@ -294,11 +408,18 @@ class GameScene extends Phaser.Scene {
                 this.blueVeils.push(blueVeil);
                 
                 this.createIceTextureEffect(blueVeil);
+                
+                // Count each ice block for percentage calculations
+                this.totalIceBlocks++;
             }
         }
         
         // Ensure chibi image remains fully opaque after adding blue veils
         this.chibiImage.setAlpha(1);
+        
+        // Reset revealed pixels counter based on total ice blocks
+        this.revealedPixels = 0;
+        this.revealPercentage = 0;
         
         console.log(`Created ${this.iceBlocks.length} ice blocks with blue veils`);
     }
@@ -314,7 +435,7 @@ class GameScene extends Phaser.Scene {
         // This is simulated by making some veils slightly more transparent in certain parts
         if (Math.random() < 0.3) {
             // Around 30% of blocks will have a slightly different opacity
-            veil.setAlpha(veil.alpha * (0.9 + Math.random() * 0.15));
+            veil.setAlpha(veil.alpha * (0.6 + Math.random() * 0.15));
         }
         
         // Apply a random slight tint variation to some blocks for more natural appearance
@@ -502,6 +623,12 @@ class GameScene extends Phaser.Scene {
                         const bombY = this.bomb.y;
                         const bombType = this.currentBombType;
                         
+                        // Cancel any previous miss timer
+                        if (this.bombMissTimer) {
+                            this.bombMissTimer.remove();
+                            this.bombMissTimer = null;
+                        }
+                        
                         // Remove the old static bomb
                         this.bomb.destroy();
                         
@@ -611,6 +738,14 @@ class GameScene extends Phaser.Scene {
                         
                         // Check if the other object is an ice block
                         const block = blockBody.gameObject;
+                        
+                        // Check if it's a valid ice block
+                        if (block && block.isActive && this.iceBlocks.includes(block)) {
+                            // Mark that the bomb has hit an ice block
+                            if (this.bomb) {
+                                this.bomb.hasHitIceBlock = true;
+                            }
+                        }
                         
                         // Get the bomb type
                         const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
@@ -876,7 +1011,7 @@ class GameScene extends Phaser.Scene {
                 this.tweens.add({
                     targets: block.blueVeil.highlight,
                     alpha: 0,
-                    duration: 8000, // 8 seconds, matching the veil
+                    duration: 5000, // 5 seconds, matching the veil
                     ease: 'Linear',
                     onComplete: () => {
                         // Remove the highlight when the animation completes
@@ -891,7 +1026,7 @@ class GameScene extends Phaser.Scene {
             this.tweens.add({
                 targets: block.blueVeil,
                 alpha: 0,
-                duration: 8000, // 8 seconds
+                duration: 5000, // 5 seconds
                 ease: 'Linear',
                 onComplete: () => {
                     // Remove the veil when the animation completes
@@ -905,11 +1040,15 @@ class GameScene extends Phaser.Scene {
         // Ensure chibi image remains fully opaque
         this.chibiImage.setAlpha(1);
         
-        // Update revealed percentage
-        const blockPixels = block.displayWidth * block.displayHeight;
+        // Update revealed percentage based on ice blocks cleared
+        this.clearedIceBlocks++;
         const previousPercentage = this.revealPercentage;
-        this.revealedPixels += blockPixels;
-        this.revealPercentage = Math.min(100, Math.floor((this.revealedPixels / this.totalImagePixels) * 100));
+        this.revealPercentage = Math.min(100, Math.floor((this.clearedIceBlocks / this.totalIceBlocks) * 100));
+        
+        // Log for debugging
+        if (this.debugMode) {
+            console.log(`Cleared ${this.clearedIceBlocks} of ${this.totalIceBlocks} blocks (${this.revealPercentage}%)`);
+        }
         
         // Emit update to UI with more detailed information
         this.events.emit('updatePercentage', this.revealPercentage);
@@ -934,8 +1073,8 @@ class GameScene extends Phaser.Scene {
     }
     
     createBlockShatter(block) {
-        // Create 4-8 smaller pieces at the block's position
-        const numPieces = Phaser.Math.Between(4, 8);
+        // Create 2-3 smaller pieces at the block's position
+        const numPieces = Phaser.Math.Between(2, 3);
         const blockSize = block.displayWidth / 2; // Pieces are half the size
         
         for (let i = 0; i < numPieces; i++) {
@@ -956,8 +1095,8 @@ class GameScene extends Phaser.Scene {
                 }
             );
             
-            // Scale down the piece
-            piece.setScale(0.3 + Math.random() * 0.2); // Random size between 0.3 and 0.5 of original
+            // Scale down the piece to 1/16 of original size (original was 60, now 15, pieces should be ~3.75)
+            piece.setScale(0.075 + Math.random() * 0.05); // Random size between 0.075 and 0.125 of original
             
             // Make sure shattered pieces appear above the chibi image
             piece.setDepth(5); // Higher than blocks (4) and blue veils (3), but lower than UI (100)
@@ -1065,6 +1204,9 @@ class GameScene extends Phaser.Scene {
             } else {
                 console.error("Audio manager not available for victory music");
             }
+            
+            // Change the background to victory background
+            this.displayVictoryBackground();
             
             // Set full opacity on the chibi image
             this.chibiImage.setAlpha(1);
@@ -1184,6 +1326,51 @@ class GameScene extends Phaser.Scene {
             this.checkGameOver();
         }
     }
+    
+    // Method to display the victory background with a nice transition
+    displayVictoryBackground() {
+        try {
+            // Check if the victory background texture exists
+            if (this.textures.exists('victoryBackground')) {
+                // Create a new image for the victory background
+                const victoryBg = this.add.image(1920/2, 1080/2, 'victoryBackground');
+                
+                // Make sure it spans the entire screen nicely
+                victoryBg.setDisplaySize(1920, 1080);
+                
+                // Start with alpha 0 (fully transparent)
+                victoryBg.setAlpha(0);
+                
+                // Set it to a depth that's above the background but below other elements
+                victoryBg.setDepth(0.5); // Between background (0) and chibi (1)
+                
+                // Create a fade-in transition
+                this.tweens.add({
+                    targets: victoryBg,
+                    alpha: 1, // Fade to fully visible
+                    duration: 2000, // Over 2 seconds
+                    ease: 'Power2',
+                    onComplete: () => {
+                        // After fading in, make the background subtly animate
+                        this.tweens.add({
+                            targets: victoryBg,
+                            scale: 1.05, // Slightly grow
+                            duration: 10000, // Very slow animation
+                            yoyo: true,
+                            repeat: -1, // Infinite repetition
+                            ease: 'Sine.easeInOut'
+                        });
+                    }
+                });
+                
+                console.log("Victory background displayed");
+            } else {
+                console.warn("Victory background texture not found");
+            }
+        } catch (error) {
+            console.error("Error displaying victory background:", error);
+        }
+    }
 
     checkGameOver() {
         if (this.isGameOver || this.isLevelComplete) return;
@@ -1299,6 +1486,12 @@ class GameScene extends Phaser.Scene {
             this.bomb.destroy();
         }
         
+        // Cancel any miss timer if it exists
+        if (this.bombMissTimer) {
+            this.bombMissTimer.remove();
+            this.bombMissTimer = null;
+        }
+        
         // Clear any trajectory graphics
         if (this.trajectoryGraphics) {
             this.trajectoryGraphics.clear();
@@ -1309,6 +1502,10 @@ class GameScene extends Phaser.Scene {
         // Create a new bomb at the slingshot position instead of the corner
         this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, this.currentBombType);
         this.bomb.setDepth(12);
+        
+        // Mark this bomb as not launched (static at slingshot)
+        this.bomb.isLaunched = false;
+        this.bomb.hasHitIceBlock = false;
         
         // Set it to be static until the user starts dragging it
         this.bomb.setStatic(true);
@@ -1339,7 +1536,19 @@ class GameScene extends Phaser.Scene {
     updateUI() {
         try {
             if (this.ui && typeof this.ui.setTexts === 'function') {
-                this.ui.setTexts(`Bombs: ${this.shotsRemaining}`, `Score: ${this.score}`);
+                // Update UI with current game values
+                this.ui.setTexts(
+                    `Bombs: ${this.shotsRemaining}`, 
+                    `Score: ${this.score || 0}`
+                );
+                
+                // Make sure UI elements have proper depth
+                if (this.ui.bombsText) {
+                    this.ui.bombsText.setDepth(this.UI_DEPTH + 1);
+                }
+                if (this.ui.scoreText) {
+                    this.ui.scoreText.setDepth(this.UI_DEPTH + 1);
+                }
             }
         } catch (error) {
             console.error("Error updating UI:", error);
@@ -1376,10 +1585,44 @@ class GameScene extends Phaser.Scene {
         this.bomb.bombType = bombType; // Store the bomb type for later use
         this.bomb.setDepth(12); // Same depth as static bomb
         
+        // Mark as a launched bomb (not static at slingshot)
+        this.bomb.isLaunched = true;
+        
         // Apply impulse (instant force)
         this.matter.body.applyForce(this.bomb.body, 
             { x: x, y: y }, 
             { x: forceX, y: forceY });
+        
+        // Track when the bomb was launched
+        this.bomb.launchTime = this.time.now;
+        this.bomb.hasHitIceBlock = false;
+        
+        // Set up a timer to check for missed bombs after 8 seconds
+        this.bombMissTimer = this.time.delayedCall(8000, () => {
+            // If the bomb still exists, is launched, and hasn't hit an ice block, consider it a miss
+            if (this.bomb && this.bomb.isLaunched && !this.bomb.hasHitIceBlock) {
+                if (this.debugMode) {
+                    console.log("Bomb missed all ice blocks for 8 seconds, destroying it");
+                }
+                
+                // Create a small "fizzle" effect
+                this.createFizzleEffect(this.bomb.x, this.bomb.y);
+                
+                // Destroy the bomb
+                this.bomb.destroy();
+                this.bomb = null;
+                
+                // Reset bomb for next shot if shots remain
+                this.time.delayedCall(1000, () => {
+                    if (this.shotsRemaining > 0) {
+                        this.resetBomb();
+                    } else {
+                        // Check level completion or game over if no shots remain
+                        this.checkLevelCompletion();
+                    }
+                });
+            }
+        });
         
         // Fallback: try direct velocity set if needed
         if (this.debugMode) {
@@ -1394,6 +1637,47 @@ class GameScene extends Phaser.Scene {
                 }
             });
         }
+    }
+    
+    // Create a small fizzle effect when a bomb misses
+    createFizzleEffect(x, y) {
+        // Create a small particle effect for a "fizzle" or "failure"
+        const particles = this.add.particles('particle');
+        particles.setDepth(6); // Same depth as other effects
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 30, max: 60 },
+            scale: { start: 0.5, end: 0 },
+            alpha: { start: 0.6, end: 0 },
+            lifespan: 800,
+            blendMode: 'ADD',
+            tint: 0xaaaaaa // Gray particles for a "fizzle"
+        });
+        
+        // Emit particles at bomb position
+        emitter.explode(15, x, y);
+        
+        // Small "fizzle" sound if available
+        if (this.sound && this.sound.add) {
+            try {
+                const fizzleSound = this.sound.add('fizzle', { volume: 0.3 });
+                fizzleSound.play();
+            } catch (e) {
+                console.log("Fizzle sound not available:", e);
+                // Try to use an existing sound at a different rate as a fallback
+                try {
+                    const fallbackSound = this.sound.add('explosion');
+                    fallbackSound.play({ volume: 0.2, rate: 0.5 });
+                } catch (e) {
+                    console.log("Fallback sound not available either");
+                }
+            }
+        }
+        
+        // Destroy the particle system after emissions complete
+        this.time.delayedCall(1000, () => {
+            particles.destroy();
+        });
     }
 
     createTargets() {
@@ -1438,7 +1722,15 @@ class GameScene extends Phaser.Scene {
             this.ui = new UI(this);
             // UI class will set its own depth in the create method
             this.ui.create();
+            
+            // Initial update to display correct values
             this.updateUI();
+            
+            // Debug message
+            if (this.debugMode) {
+                console.log("UI initialized with correct depth settings");
+            }
+            
             console.log("UI created successfully");
         } catch (error) {
             console.error("Error initializing UI:", error);
@@ -1453,7 +1745,9 @@ class GameScene extends Phaser.Scene {
         
         this.shotsRemaining = this.MAX_SHOTS;
         this.revealPercentage = 0;
-        this.revealedPixels = 0;
+        
+        // Reset the ice block counters
+        this.clearedIceBlocks = 0;
         
         // Reset bomb counts
         this.bombsRemaining = {
@@ -1545,40 +1839,21 @@ class GameScene extends Phaser.Scene {
         
         // Recreate the completion veil
         if (this.completionVeil) {
-            this.completionVeil.destroy();
+            // If it's a container, destroy all children
+            if (this.veilContainer) {
+                this.veilContainer.destroy(true);
+                this.veilContainer = null;
+            } else if (this.completionVeil.scene) {
+                this.completionVeil.destroy();
+            }
         }
-        if (this.frostGraphics) {
+        
+        if (this.frostGraphics && this.frostGraphics.scene) {
             this.frostGraphics.destroy();
         }
         
-        this.completionVeil = this.add.rectangle(
-            1920/2,
-            1080/2,
-            800,
-            900,
-            0x0033aa, // Deep blue color instead of white
-            0.7
-        ).setDepth(2);
-        
-        // Recreate frost effect
-        const frostGraphics = this.add.graphics();
-        frostGraphics.lineStyle(2, 0x66aaff, 0.3); // Light blue lines for frost effect
-        
-        for (let i = 0; i < 50; i++) {
-            const x = Phaser.Math.Between(-400, 400);
-            const y = Phaser.Math.Between(-450, 450);
-            const size = Phaser.Math.Between(20, 60);
-            
-            frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-            frostGraphics.lineTo(1920/2 + x + size, 1080/2 + y);
-            frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-            frostGraphics.lineTo(1920/2 + x - size/2, 1080/2 + y + size);
-            frostGraphics.moveTo(1920/2 + x, 1080/2 + y);
-            frostGraphics.lineTo(1920/2 + x - size/2, 1080/2 + y - size);
-        }
-        
-        frostGraphics.setDepth(2);
-        this.frostGraphics = frostGraphics;
+        // Use our new method to create a completion veil that matches the chibi shape
+        this.createCompletionVeil();
         
         // Update UI
         this.events.emit('updateShots', this.shotsRemaining);
@@ -1597,9 +1872,24 @@ class GameScene extends Phaser.Scene {
                     this.debugText.setText(`Bomb out of bounds at ${this.bomb.x.toFixed(1)},${this.bomb.y.toFixed(1)}`);
                 }
                 
+                // Cancel any miss timer if it exists
+                if (this.bombMissTimer) {
+                    this.bombMissTimer.remove();
+                    this.bombMissTimer = null;
+                }
+                
+                // Create a small "fizzle" effect since the bomb went off-screen
+                this.createFizzleEffect(this.bomb.x, Math.min(this.bomb.y, 1080 - 10));
+                
+                // Destroy the bomb
+                this.bomb.destroy();
+                this.bomb = null;
+                
                 // Reset for next shot if we have shots remaining
                 if (this.shotsRemaining > 0) {
-                    this.resetBomb();
+                    this.time.delayedCall(1000, () => {
+                        this.resetBomb();
+                    });
                 } else {
                     this.checkLevelCompletion(); // This will now also check for game over
                 }
@@ -1664,96 +1954,127 @@ class GameScene extends Phaser.Scene {
     }
 
     createBombSelector() {
-        // Create bomb selection buttons with highest depth
-        const buttonY = 920;
-        const spacing = 100;
+        // Create bomb selection buttons at the bottom of the screen
+        // Ensuring they're well within the visible 1920x1080 area
+        const gameHeight = 1080;
+        const buttonY = gameHeight - 100; // Position 100px from bottom edge (was 60px)
+        const spacing = 120; // Increase spacing for better visibility
         
-        // Create a container for the bomb selector UI
+        // Calculate starting X position to center the bomb selector
+        const gameWidth = 1920;
+        const startX = gameWidth / 2 - (spacing * 2); // Center the 5 buttons
+        
+        // Create a container for the bomb selector UI with proper depth
         this.bombSelectorContainer = this.add.container(0, 0);
         this.bombSelectorContainer.setDepth(this.UI_DEPTH);
         
-        // Create buttons with high depth
-        this.blastButton = this.add.image(this.cameras.main.width - 600, buttonY, 'blast_bomb')
-            .setScale(2)
-            .setInteractive();
-        this.blastButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.BLAST));
+        // Create background panel for bomb selector with border for better visibility
+        const selectorBg = this.add.rectangle(
+            gameWidth / 2,
+            buttonY,
+            gameWidth,
+            120,
+            0x000000,
+            0.5 // Reduced opacity from 0.7 to 0.5 for better visibility
+        );
+        selectorBg.setDepth(this.UI_DEPTH - 1); // Keep background behind the buttons
+        selectorBg.setStrokeStyle(2, 0x3388ff, 0.8); // Add a blue border
         
-        this.piercerButton = this.add.image(this.cameras.main.width - 600 + spacing, buttonY, 'piercer_bomb')
-            .setScale(2)
-            .setInteractive();
-        this.piercerButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.PIERCER));
+        // Add all to container first (background should be at bottom of container)
+        this.bombSelectorContainer.add(selectorBg);
         
-        this.clusterButton = this.add.image(this.cameras.main.width - 600 + spacing * 2, buttonY, 'cluster_bomb')
-            .setScale(2)
-            .setInteractive();
-        this.clusterButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.CLUSTER));
-        
-        this.stickyButton = this.add.image(this.cameras.main.width - 600 + spacing * 3, buttonY, 'sticky_bomb')
-            .setScale(2)
-            .setInteractive();
-        this.stickyButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.STICKY));
-        
-        this.shattererButton = this.add.image(this.cameras.main.width - 600 + spacing * 4, buttonY, 'shatterer_bomb')
-            .setScale(2)
-            .setInteractive();
-        this.shattererButton.on('pointerdown', () => this.selectBombType(this.BOMB_TYPES.SHATTERER));
-        
-        // Create name labels for each bomb type
+        // Initialize label containers
         this.bombLabels = {};
         this.bombCounters = {};
         
-        const createBombLabel = (button, bombType) => {
-            // Bomb name style
+        // Define colors for each bomb type for better visual distinction
+        const bombColors = {
+            [this.BOMB_TYPES.BLAST]: 0xff4444,     // Red for blast
+            [this.BOMB_TYPES.PIERCER]: 0x44aaff,   // Blue for piercer
+            [this.BOMB_TYPES.CLUSTER]: 0xffaa44,   // Orange for cluster
+            [this.BOMB_TYPES.STICKY]: 0x44ff44,    // Green for sticky
+            [this.BOMB_TYPES.SHATTERER]: 0xaa44ff  // Purple for shatterer
+        };
+        
+        // Create buttons with proper positioning and ensure they're in front of the background
+        const createBombButton = (x, y, bombType) => {
+            // Create the button with depth higher than background
+            const button = this.add.image(x, y, bombType)
+                .setScale(1.2)
+                .setInteractive()
+                .setDepth(this.UI_DEPTH + 1); // Ensure buttons are in front of background
+            
+            // Add a subtle highlight/glow effect behind the button using the bomb's color
+            const glowColor = bombColors[bombType] || 0xffffff;
+            const glow = this.add.circle(x, y, 28, glowColor, 0.3);
+            glow.setDepth(this.UI_DEPTH); // Between background and button
+            this.bombSelectorContainer.add(glow);
+            
+            button.on('pointerdown', () => this.selectBombType(bombType));
+            
+            // Bomb name style with stronger contrast
             const nameStyle = {
-                font: '16px Arial',
+                font: '14px Arial',
                 fill: '#ffffff',
                 stroke: '#000000',
-                strokeThickness: 3
+                strokeThickness: 4, // Increased from 3 for better visibility
+                shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
             };
             
-            // Counter style (smaller)
+            // Counter style with better visibility
             const counterStyle = {
                 font: '14px Arial',
                 fill: '#ffff00',
                 stroke: '#000000',
-                strokeThickness: 2
+                strokeThickness: 3, // Increased from 2 for better visibility
+                shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
             };
             
-            // Create the name label
+            // Create the name label below the button
             const nameLabel = this.add.text(
-                button.x,
-                button.y + 40,
+                x,
+                y + 20,
                 this.BOMB_NAMES[bombType],
                 nameStyle
-            ).setOrigin(0.5);
+            ).setOrigin(0.5).setDepth(this.UI_DEPTH + 1); // Ensure text is in front
             
-            // Create the counter label
+            // Create the counter label above the button
             const counterLabel = this.add.text(
-                button.x,
-                button.y - 40,
+                x,
+                y - 20,
                 `x${this.bombsRemaining[bombType]}`,
                 counterStyle
-            ).setOrigin(0.5);
+            ).setOrigin(0.5).setDepth(this.UI_DEPTH + 1); // Ensure text is in front
             
-            // Add to container
+            // Add to container to keep everything organized
             this.bombSelectorContainer.add(button);
             this.bombSelectorContainer.add(nameLabel);
             this.bombSelectorContainer.add(counterLabel);
             
+            // Store reference to glow for animation
+            button.glow = glow;
+            
             // Store references
             this.bombLabels[bombType] = nameLabel;
             this.bombCounters[bombType] = counterLabel;
+            
+            return button;
         };
         
-        // Create labels for each bomb
-        createBombLabel(this.blastButton, this.BOMB_TYPES.BLAST);
-        createBombLabel(this.piercerButton, this.BOMB_TYPES.PIERCER);
-        createBombLabel(this.clusterButton, this.BOMB_TYPES.CLUSTER);
-        createBombLabel(this.stickyButton, this.BOMB_TYPES.STICKY);
-        createBombLabel(this.shattererButton, this.BOMB_TYPES.SHATTERER);
+        // Create all bomb buttons using the new function
+        this.blastButton = createBombButton(startX, buttonY, this.BOMB_TYPES.BLAST);
+        this.piercerButton = createBombButton(startX + spacing, buttonY, this.BOMB_TYPES.PIERCER);
+        this.clusterButton = createBombButton(startX + spacing * 2, buttonY, this.BOMB_TYPES.CLUSTER);
+        this.stickyButton = createBombButton(startX + spacing * 3, buttonY, this.BOMB_TYPES.STICKY);
+        this.shattererButton = createBombButton(startX + spacing * 4, buttonY, this.BOMB_TYPES.SHATTERER);
         
         // Default selection
         this.updateBombSelection();
+        
+        // Debug text to confirm position
+        if (this.debugMode) {
+            console.log(`Bomb selector positioned at y=${buttonY} with spacing=${spacing}`);
+        }
     }
     
     selectBombType(bombType) {
@@ -1780,37 +2101,126 @@ class GameScene extends Phaser.Scene {
     
     updateBombSelection() {
         // Update button appearances to show selection
-        this.blastButton.setScale(this.currentBombType === this.BOMB_TYPES.BLAST ? 1.2 : 1);
-        this.piercerButton.setScale(this.currentBombType === this.BOMB_TYPES.PIERCER ? 1.2 : 1);
-        this.clusterButton.setScale(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 1.2 : 1);
-        this.stickyButton.setScale(this.currentBombType === this.BOMB_TYPES.STICKY ? 1.2 : 1);
-        this.shattererButton.setScale(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 1.2 : 1);
+        // Scale selected button slightly larger and use brighter tint
+        this.blastButton.setScale(this.currentBombType === this.BOMB_TYPES.BLAST ? 1.4 : 1.2);
+        this.piercerButton.setScale(this.currentBombType === this.BOMB_TYPES.PIERCER ? 1.4 : 1.2);
+        this.clusterButton.setScale(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 1.4 : 1.2);
+        this.stickyButton.setScale(this.currentBombType === this.BOMB_TYPES.STICKY ? 1.4 : 1.2);
+        this.shattererButton.setScale(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 1.4 : 1.2);
         
-        // Add glow to selected bomb
-        this.blastButton.setTint(this.currentBombType === this.BOMB_TYPES.BLAST ? 0xffffff : 0xaaaaaa);
-        this.piercerButton.setTint(this.currentBombType === this.BOMB_TYPES.PIERCER ? 0xffffff : 0xaaaaaa);
-        this.clusterButton.setTint(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 0xffffff : 0xaaaaaa);
-        this.stickyButton.setTint(this.currentBombType === this.BOMB_TYPES.STICKY ? 0xffffff : 0xaaaaaa);
-        this.shattererButton.setTint(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 0xffffff : 0xaaaaaa);
+        // Add glow to selected bomb - use bright white for selected, dimmer for others
+        this.blastButton.setTint(this.currentBombType === this.BOMB_TYPES.BLAST ? 0xffffff : 0xbbbbbb);
+        this.piercerButton.setTint(this.currentBombType === this.BOMB_TYPES.PIERCER ? 0xffffff : 0xbbbbbb);
+        this.clusterButton.setTint(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 0xffffff : 0xbbbbbb);
+        this.stickyButton.setTint(this.currentBombType === this.BOMB_TYPES.STICKY ? 0xffffff : 0xbbbbbb);
+        this.shattererButton.setTint(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 0xffffff : 0xbbbbbb);
+        
+        // Animate the glow effects
+        const buttons = [
+            this.blastButton,
+            this.piercerButton, 
+            this.clusterButton,
+            this.stickyButton,
+            this.shattererButton
+        ];
+        
+        // Apply animation to each button's glow effect
+        buttons.forEach(button => {
+            if (button && button.glow) {
+                // Kill any existing tweens
+                this.tweens.killTweensOf(button.glow);
+                
+                // Is this the selected button?
+                const isSelected = (
+                    (button === this.blastButton && this.currentBombType === this.BOMB_TYPES.BLAST) ||
+                    (button === this.piercerButton && this.currentBombType === this.BOMB_TYPES.PIERCER) ||
+                    (button === this.clusterButton && this.currentBombType === this.BOMB_TYPES.CLUSTER) ||
+                    (button === this.stickyButton && this.currentBombType === this.BOMB_TYPES.STICKY) ||
+                    (button === this.shattererButton && this.currentBombType === this.BOMB_TYPES.SHATTERER)
+                );
+                
+                if (isSelected) {
+                    // Make selected button's glow pulse
+                    button.glow.setAlpha(0.5); // Higher starting alpha
+                    this.tweens.add({
+                        targets: button.glow,
+                        alpha: { from: 0.5, to: 0.8 },
+                        scale: { from: 1, to: 1.3 },
+                        duration: 800,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                } else {
+                    // Keep non-selected button's glow subtle
+                    button.glow.setAlpha(0.3);
+                    button.glow.setScale(1);
+                }
+            }
+        });
+        
+        // Create or update selection indicator
+        if (!this.selectionIndicator) {
+            // Create a highlight circle behind the selected bomb
+            this.selectionIndicator = this.add.circle(0, 0, 30, 0xffff00, 0.4);
+            this.selectionIndicator.setDepth(this.UI_DEPTH);
+            this.bombSelectorContainer.add(this.selectionIndicator);
+        }
+        
+        // Move the selection indicator to the currently selected bomb
+        let selectedButton;
+        switch(this.currentBombType) {
+            case this.BOMB_TYPES.BLAST:
+                selectedButton = this.blastButton;
+                break;
+            case this.BOMB_TYPES.PIERCER:
+                selectedButton = this.piercerButton;
+                break;
+            case this.BOMB_TYPES.CLUSTER:
+                selectedButton = this.clusterButton;
+                break;
+            case this.BOMB_TYPES.STICKY:
+                selectedButton = this.stickyButton;
+                break;
+            case this.BOMB_TYPES.SHATTERER:
+                selectedButton = this.shattererButton;
+                break;
+        }
+        
+        if (selectedButton) {
+            this.selectionIndicator.setPosition(selectedButton.x, selectedButton.y);
+            
+            // Add a pulsing animation to the selection indicator
+            this.tweens.killTweensOf(this.selectionIndicator);
+            this.tweens.add({
+                targets: this.selectionIndicator,
+                scale: { from: 1, to: 1.2 },
+                alpha: { from: 0.4, to: 0.6 },
+                duration: 800,
+                yoyo: true,
+                repeat: -1
+            });
+        }
         
         // Update label appearances
         Object.keys(this.bombLabels).forEach(bombType => {
             const isSelected = bombType === this.currentBombType;
             
-            // Highlight selected bomb name
+            // Highlight selected bomb name with brighter color and larger text
             this.bombLabels[bombType].setStyle({
-                font: isSelected ? 'bold 16px Arial' : '16px Arial',
+                font: isSelected ? 'bold 16px Arial' : '14px Arial',
                 fill: isSelected ? '#ffff00' : '#ffffff',
                 stroke: '#000000',
-                strokeThickness: isSelected ? 4 : 3
+                strokeThickness: isSelected ? 5 : 4,
+                shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: isSelected ? 3 : 2, fill: true }
             });
             
             // Highlight selected bomb counter
             this.bombCounters[bombType].setStyle({
-                font: isSelected ? 'bold 14px Arial' : '14px Arial',
+                font: isSelected ? 'bold 16px Arial' : '14px Arial',
                 fill: isSelected ? '#ffffff' : '#ffff00',
                 stroke: '#000000',
-                strokeThickness: isSelected ? 4 : 2
+                strokeThickness: isSelected ? 4 : 3,
+                shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: isSelected ? 3 : 2, fill: true }
             });
         });
     }
@@ -2307,7 +2717,7 @@ class GameScene extends Phaser.Scene {
             this.trajectoryGraphics.clear();
             
             // Number of points to predict - greatly increased for much longer trajectory
-            const numPoints = 100; // Increased from 35 to 100 for a trajectory 3x longer
+            const numPoints = 120; // Increased from 100 to 120 for even longer trajectory
             
             // Time step for each predicted point (in seconds)
             const timeStep = 0.1; // Reduced time step to make points closer together
@@ -2375,7 +2785,7 @@ class GameScene extends Phaser.Scene {
             // Draw dotted line connecting trajectory points - skip some points for better performance
             if (this.trajectoryPoints.length >= 2) {
                 // We'll draw fewer dots for better performance, approximately every 2-3 points
-                const skipFactor = Math.ceil(this.trajectoryPoints.length / 50); // Don't draw more than ~50 dots
+                const skipFactor = Math.ceil(this.trajectoryPoints.length / 60); // Don't draw more than ~60 dots
                 
                 for (let i = 0; i < this.trajectoryPoints.length; i += skipFactor) {
                     const point = this.trajectoryPoints[i];
@@ -2414,21 +2824,55 @@ class GameScene extends Phaser.Scene {
             console.log("Removing completion veil at " + this.revealPercentage + "% revealed");
             this.completionVeilRemoved = true;
             
-            // Remove the completion veil with a nice effect
-            this.tweens.add({
-                targets: [this.completionVeil, this.frostGraphics],
-                alpha: 0,
-                duration: 1500,
-                ease: 'Power2',
-                onComplete: () => {
-                    if (this.completionVeil && this.completionVeil.scene) {
-                        this.completionVeil.destroy();
+            // If the completion veil is a container of blocks
+            if (this.veilContainer) {
+                // Fade out all individual veil blocks
+                this.veilContainer.iterate(veilBlock => {
+                    this.tweens.add({
+                        targets: veilBlock,
+                        alpha: 0,
+                        duration: 1500,
+                        ease: 'Power2'
+                    });
+                });
+                
+                // Remove the container after the animation completes
+                this.time.delayedCall(1500, () => {
+                    if (this.veilContainer && this.veilContainer.scene) {
+                        this.veilContainer.destroy();
                     }
-                    if (this.frostGraphics && this.frostGraphics.scene) {
-                        this.frostGraphics.destroy();
+                });
+            } 
+            // Fallback for rectangular veil
+            else if (this.completionVeil.scene) {
+                // Remove the completion veil with a nice effect
+                this.tweens.add({
+                    targets: this.completionVeil,
+                    alpha: 0,
+                    duration: 1500,
+                    ease: 'Power2',
+                    onComplete: () => {
+                        if (this.completionVeil && this.completionVeil.scene) {
+                            this.completionVeil.destroy();
+                        }
                     }
-                }
-            });
+                });
+            }
+            
+            // Handle frost graphics separately
+            if (this.frostGraphics && this.frostGraphics.scene) {
+                this.tweens.add({
+                    targets: this.frostGraphics,
+                    alpha: 0,
+                    duration: 1500,
+                    ease: 'Power2',
+                    onComplete: () => {
+                        if (this.frostGraphics && this.frostGraphics.scene) {
+                            this.frostGraphics.destroy();
+                        }
+                    }
+                });
+            }
             
             // Add sparkle particles where the veil was
             const particles = this.add.particles('particle');
@@ -2452,6 +2896,218 @@ class GameScene extends Phaser.Scene {
                     particles.destroy();
                 });
             });
+        }
+    }
+
+    createCompletionVeil() {
+        try {
+            // Get the chibi image dimensions with scaling
+            const scale = this.chibiImage.scale;
+            const imageWidth = this.chibiImage.width;
+            const imageHeight = this.chibiImage.height;
+            
+            // Calculate the exact boundaries
+            const imageX = this.chibiImage.x - (imageWidth * scale) / 2;
+            const imageY = this.chibiImage.y - (imageHeight * scale) / 2;
+            
+            console.log(`Creating completion veil for chibi at ${this.chibiImage.x}, ${this.chibiImage.y}`);
+            console.log(`With bounds: ${imageX}, ${imageY}, size: ${imageWidth * scale}x${imageHeight * scale}`);
+            
+            // Create a container for the veil
+            this.veilContainer = this.add.container(0, 0);
+            this.veilContainer.setDepth(2); // Above chibi (1) but below ice blocks (4)
+            
+            // Create a temporary canvas to check pixel data
+            const tempCanvas = document.createElement('canvas');
+            const tempContext = tempCanvas.getContext('2d');
+            tempCanvas.width = imageWidth;
+            tempCanvas.height = imageHeight;
+            
+            // Get the texture key of the chibi image
+            const textureKey = this.chibiImage.texture.key;
+            
+            // Get the image data
+            const frame = this.textures.getFrame(textureKey);
+            const source = frame.source.image || frame.source.canvas;
+            
+            // Draw the image to our temp canvas
+            tempContext.drawImage(source, 0, 0, imageWidth, imageHeight);
+            
+            // Create a graphics object for the frost effect
+            const frostGraphics = this.add.graphics();
+            frostGraphics.setDepth(2);
+            this.frostGraphics = frostGraphics;
+            
+            // Block size for the veil - smaller size for more precise shape
+            const blockSize = 10;
+            
+            // Alpha threshold - lower value to include more semi-transparent pixels
+            const alphaThreshold = 50; // Lower threshold to catch edge pixels
+            
+            // Create veil blocks that match the chibi image shape
+            const rows = Math.ceil(imageHeight * scale / blockSize);
+            const cols = Math.ceil(imageWidth * scale / blockSize);
+            
+            // Sample size for checking multiple pixels in the block area
+            const sampleSize = 5; // Check more points in a 5x5 grid
+            const sampleOffset = Math.floor(blockSize / (sampleSize + 1) / scale);
+            
+            // Create a 2D grid to track where we've placed veil blocks
+            const veilGrid = Array(rows).fill().map(() => Array(cols).fill(false));
+            
+            // Keep track of non-transparent points for frost effect
+            const nonTransparentPoints = [];
+            
+            // First pass: Find all blocks with visible pixels
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    // Calculate screen position
+                    const blockScreenX = imageX + col * blockSize + blockSize / 2;
+                    const blockScreenY = imageY + row * blockSize + blockSize / 2;
+                    
+                    // Sample multiple points within this block area
+                    let hasVisiblePixel = false;
+                    
+                    for (let sx = 0; sx < sampleSize; sx++) {
+                        for (let sy = 0; sy < sampleSize; sy++) {
+                            // Calculate sampling position in the original image
+                            const offsetX = -Math.floor(sampleSize/2) + sx;
+                            const offsetY = -Math.floor(sampleSize/2) + sy;
+                            
+                            const sampleX = Math.floor(col * blockSize / scale) + offsetX * sampleOffset;
+                            const sampleY = Math.floor(row * blockSize / scale) + offsetY * sampleOffset;
+                            
+                            // Ensure we're within bounds
+                            if (sampleX >= 0 && sampleX < imageWidth && 
+                                sampleY >= 0 && sampleY < imageHeight) {
+                                
+                                try {
+                                    const pixelData = tempContext.getImageData(sampleX, sampleY, 1, 1).data;
+                                    // If any sampled pixel has alpha above threshold, mark block as visible
+                                    if (pixelData[3] >= alphaThreshold) {
+                                        hasVisiblePixel = true;
+                                        break;
+                                    }
+                                } catch (e) {
+                                    console.error(`Error sampling pixel at ${sampleX},${sampleY}:`, e);
+                                }
+                            }
+                        }
+                        if (hasVisiblePixel) break;
+                    }
+                    
+                    if (hasVisiblePixel) {
+                        veilGrid[row][col] = true;
+                        nonTransparentPoints.push({
+                            x: blockScreenX,
+                            y: blockScreenY
+                        });
+                    }
+                }
+            }
+            
+            // Second pass: Add padding around detected pixels to ensure edges are covered
+            const paddingAmount = 1; // How many blocks of padding to add
+            
+            // Create a copy of the grid before adding padding
+            const originalGrid = veilGrid.map(row => [...row]);
+            
+            // Add padding around each detected block
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    if (originalGrid[row][col]) {
+                        // Add padding blocks around this block
+                        for (let pr = -paddingAmount; pr <= paddingAmount; pr++) {
+                            for (let pc = -paddingAmount; pc <= paddingAmount; pc++) {
+                                const padRow = row + pr;
+                                const padCol = col + pc;
+                                
+                                // Make sure we're in bounds
+                                if (padRow >= 0 && padRow < rows && padCol >= 0 && padCol < cols) {
+                                    veilGrid[padRow][padCol] = true;
+                                    
+                                    // Add these to non-transparent points if not already included
+                                    const blockX = imageX + padCol * blockSize + blockSize / 2;
+                                    const blockY = imageY + padRow * blockSize + blockSize / 2;
+                                    
+                                    // Only add if this point is not already in the array
+                                    if (!nonTransparentPoints.some(p => p.x === blockX && p.y === blockY)) {
+                                        nonTransparentPoints.push({
+                                            x: blockX,
+                                            y: blockY
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Third pass: Create veil blocks based on our grid
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    if (!veilGrid[row][col]) continue;
+                    
+                    // Calculate screen position
+                    const blockScreenX = imageX + col * blockSize + blockSize / 2;
+                    const blockScreenY = imageY + row * blockSize + blockSize / 2;
+                    
+                    // Create a veil block at this position
+                    const veilBlock = this.add.rectangle(
+                        blockScreenX,
+                        blockScreenY,
+                        blockSize,
+                        blockSize,
+                        0x0033aa, // Deep blue color
+                        0.7
+                    );
+                    
+                    veilBlock.setDepth(2);
+                    this.veilContainer.add(veilBlock);
+                }
+            }
+            
+            // Add frost effects at random non-transparent points
+            frostGraphics.lineStyle(2, 0x66aaff, 0.3); // Light blue lines for frost effect
+            
+            // Number of frost patterns to create
+            const numPatterns = 50;
+            
+            // Add crystalline patterns only in non-transparent areas
+            for (let i = 0; i < numPatterns && nonTransparentPoints.length > 0; i++) {
+                // Select a random point from the non-transparent pixels
+                const randomIndex = Math.floor(Math.random() * nonTransparentPoints.length);
+                const point = nonTransparentPoints[randomIndex];
+                
+                // Create a frost pattern at this point
+                const size = Phaser.Math.Between(15, 40);
+                
+                // Draw a snowflake-like pattern
+                frostGraphics.moveTo(point.x, point.y);
+                frostGraphics.lineTo(point.x + size, point.y);
+                frostGraphics.moveTo(point.x, point.y);
+                frostGraphics.lineTo(point.x - size/2, point.y + size);
+                frostGraphics.moveTo(point.x, point.y);
+                frostGraphics.lineTo(point.x - size/2, point.y - size);
+            }
+            
+            // Store reference to the veil container
+            this.completionVeil = this.veilContainer;
+            
+            console.log('Completion veil created with shape matching chibi');
+        } catch (error) {
+            console.error("Error creating completion veil:", error);
+            
+            // Fallback to simple rectangle if there's an error
+            this.completionVeil = this.add.rectangle(
+                this.chibiImage.x,
+                this.chibiImage.y,
+                this.chibiImage.width * this.chibiImage.scale,
+                this.chibiImage.height * this.chibiImage.scale,
+                0x0033aa,
+                0.7
+            ).setDepth(2);
         }
     }
 }

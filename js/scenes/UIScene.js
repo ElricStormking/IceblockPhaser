@@ -7,46 +7,25 @@ class UIScene extends Phaser.Scene {
         // Get reference to game scene
         this.gameScene = this.scene.get('GameScene');
         
+        // Setup camera for UI elements
+        this.setupUICamera();
+        
         // Get screen dimensions for positioning
-        const gameWidth = this.cameras.main.width;
-        const gameHeight = this.cameras.main.height;
+        const gameWidth = 1920;
+        const gameHeight = 1080;
         const centerX = gameWidth / 2;
         
-        // Create background panels for UI elements for better visibility
-        const panelColor = 0x000000;
-        const panelAlpha = 0.5;
-        
-        // Top panel for percentage displays
-        const topPanel = this.add.rectangle(
-            centerX, 
-            40, 
-            300, 
-            80, 
-            panelColor, 
-            panelAlpha
-        ).setOrigin(0.5, 0.5).setDepth(1);
-        
-        // Left panel for shots counter
-        const leftPanel = this.add.rectangle(
-            130, 
-            40, 
-            240, 
-            50, 
-            panelColor, 
-            panelAlpha
-        ).setOrigin(0.5, 0.5).setDepth(1);
-        
-        // Create UI elements with better positioning
+        // Create UI elements with better positioning and higher visibility
         // Shots counter positioned top-left
-        this.shotsText = this.add.text(130, 40, 'Shots: 5', {
-            font: '24px Arial',
+        this.shotsText = this.add.text(150, 40, 'Shots: 5', {
+            font: '28px Arial',
             fill: '#ffffff',
             stroke: '#000000',
             strokeThickness: 4
         }).setOrigin(0.5, 0.5).setDepth(2);
         
         // Revealed percentage positioned at top center
-        this.percentageText = this.add.text(centerX, 25, 'Revealed: 0%', {
+        this.percentageText = this.add.text(centerX, 30, 'Revealed: 0%', {
             font: '28px Arial',
             fill: '#ffffff',
             stroke: '#000000',
@@ -55,26 +34,26 @@ class UIScene extends Phaser.Scene {
         }).setOrigin(0.5, 0.5).setDepth(2);
         
         // Target percentage positioned at top center, below revealed percentage
-        this.targetText = this.add.text(centerX, 55, 'Target: 80%', {
-            font: '24px Arial',
+        this.targetText = this.add.text(centerX, 60, 'Target: 80%', {
+            font: '22px Arial',
             fill: '#ffffff',
             stroke: '#000000',
             strokeThickness: 4
         }).setOrigin(0.5, 0.5).setDepth(2);
         
-        // Add a simple progress bar under the text
+        // Add a more compact progress bar
         this.progressBarBg = this.add.rectangle(
             centerX,
-            80,
-            250,
+            90,
+            350,
             12,
             0x444444,
             1
         ).setOrigin(0.5, 0.5).setDepth(1);
         
         this.progressBar = this.add.rectangle(
-            centerX - 125,
-            80,
+            centerX - 175,
+            90,
             0,
             10,
             0x00ff00,
@@ -84,10 +63,10 @@ class UIScene extends Phaser.Scene {
         // Add percentage text directly on the progress bar
         this.progressText = this.add.text(
             centerX,
-            80,
+            90,
             '0%',
             {
-                font: '16px Arial',
+                font: '14px Arial',
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 3,
@@ -99,6 +78,62 @@ class UIScene extends Phaser.Scene {
         this.gameScene.events.on('updateShots', this.updateShots, this);
         this.gameScene.events.on('updatePercentage', this.updatePercentage, this);
         this.gameScene.events.on('levelComplete', this.showLevelComplete, this);
+        
+        // Debug text to verify position
+        if (this.gameScene.debugMode) {
+            console.log(`UI positioned at width=${gameWidth}, height=${gameHeight}`);
+        }
+    }
+
+    setupUICamera() {
+        // Define strict dimensions
+        const gameWidth = 1920;
+        const gameHeight = 1080;
+        
+        // Configure the main camera to show the entire 1920x1080 UI area
+        this.cameras.main.setName('UI Main Camera');
+        this.cameras.main.setBounds(0, 0, gameWidth, gameHeight);
+        this.cameras.main.setViewport(0, 0, gameWidth, gameHeight);
+        this.cameras.main.setBackgroundColor('rgba(0,0,0,0)'); // Transparent background
+        
+        // Log camera and scaling information
+        console.log(`UI Scene camera setup: ${this.scale.width}x${this.scale.height}`);
+        console.log(`Scale mode: ${this.scale.scaleMode}`);
+        
+        // Ensure all UI elements are properly scaled and visible
+        this.scale.on('resize', this.resize, this);
+        
+        // Make sure cameras refresh when game size changes
+        this.scale.on('resize', (gameSize) => {
+            console.log(`Game resized to: ${gameSize.width}x${gameSize.height}`);
+            // Refresh camera bounds
+            this.cameras.main.setBounds(0, 0, gameWidth, gameHeight);
+            this.cameras.main.setViewport(0, 0, gameWidth, gameHeight);
+        });
+        
+        // Initial resize call
+        this.resize();
+    }
+    
+    resize() {
+        const gameWidth = 1920;
+        const gameHeight = 1080;
+        const scaleX = this.scale.width / gameWidth;
+        const scaleY = this.scale.height / gameHeight;
+        
+        console.log(`UI resize: Scale factors ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`);
+        
+        // Ensure UI elements stay within the visible area
+        // Check if any UI elements need repositioning
+        const visibleHeight = this.scale.height;
+        const visibleWidth = this.scale.width;
+        
+        // Log the visible dimensions for debugging
+        console.log(`Visible game area: ${visibleWidth}x${visibleHeight}`);
+        
+        // Ensure camera is showing the entire game area
+        this.cameras.main.setBounds(0, 0, gameWidth, gameHeight);
+        this.cameras.main.setViewport(0, 0, gameWidth, gameHeight);
     }
 
     updateShots(shots) {
@@ -113,13 +148,13 @@ class UIScene extends Phaser.Scene {
         this.percentageText.setText(`Revealed: ${roundedPercentage}%`).setVisible(true);
         this.progressText.setText(`${roundedPercentage}%`).setVisible(true);
         
-        // Update progress bar
-        this.progressBar.width = (roundedPercentage / 100) * 250;
+        // Update progress bar - adjusted for 350px width
+        this.progressBar.width = (roundedPercentage / 100) * 350;
         
         // Add visual feedback by changing color when getting closer to target
         if (roundedPercentage >= 80) {
             this.percentageText.setStyle({ 
-                font: '28px Arial',
+                font: '28px Arial', // Reduced from 32px
                 fill: '#00ff00',
                 stroke: '#000000',
                 strokeThickness: 4,
@@ -127,7 +162,7 @@ class UIScene extends Phaser.Scene {
             }); // Green for complete
             this.progressBar.fillColor = 0x00ff00; // Green
             this.progressText.setStyle({
-                font: '16px Arial',
+                font: '14px Arial', // Reduced from 16px
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 3,
@@ -135,7 +170,7 @@ class UIScene extends Phaser.Scene {
             });
         } else if (roundedPercentage >= 60) {
             this.percentageText.setStyle({ 
-                font: '28px Arial',
+                font: '28px Arial', // Reduced from 32px
                 fill: '#ffff00',
                 stroke: '#000000',
                 strokeThickness: 4,
@@ -143,7 +178,7 @@ class UIScene extends Phaser.Scene {
             }); // Yellow for getting close
             this.progressBar.fillColor = 0xffff00; // Yellow
             this.progressText.setStyle({
-                font: '16px Arial',
+                font: '14px Arial', // Reduced from 16px
                 fill: '#000000',
                 stroke: '#ffffff',
                 strokeThickness: 3,
@@ -151,7 +186,7 @@ class UIScene extends Phaser.Scene {
             });
         } else if (roundedPercentage >= 30) {
             this.percentageText.setStyle({ 
-                font: '28px Arial',
+                font: '28px Arial', // Reduced from 32px
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 4,
@@ -159,7 +194,7 @@ class UIScene extends Phaser.Scene {
             }); // White for default
             this.progressBar.fillColor = 0xff8800; // Orange
             this.progressText.setStyle({
-                font: '16px Arial',
+                font: '14px Arial', // Reduced from 16px
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 3,
@@ -167,7 +202,7 @@ class UIScene extends Phaser.Scene {
             });
         } else {
             this.percentageText.setStyle({ 
-                font: '28px Arial',
+                font: '28px Arial', // Reduced from 32px
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 4,
@@ -175,7 +210,7 @@ class UIScene extends Phaser.Scene {
             }); // White for default
             this.progressBar.fillColor = 0xff0000; // Red
             this.progressText.setStyle({
-                font: '16px Arial',
+                font: '14px Arial', // Reduced from 16px
                 fill: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 3,

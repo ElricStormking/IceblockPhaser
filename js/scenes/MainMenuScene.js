@@ -102,7 +102,7 @@ class MainMenuScene extends Phaser.Scene {
             
             const block = this.add.image(x, y, 'iceBlock');
             block.setScale(2); // Larger blocks for higher resolution
-            block.setAlpha(0.9); // Increased from 0.6 to 0.9 for less transparency
+            block.setAlpha(0.5); // Increased from 0.6 to 0.9 for less transparency
             block.setRotation(Phaser.Math.Between(-30, 30) * Math.PI / 180);
             
             // Add a tween to make it spin slowly

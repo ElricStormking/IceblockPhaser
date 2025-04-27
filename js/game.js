@@ -4,6 +4,23 @@ const config = {
     height: 1080,
     parent: 'game-container',
     backgroundColor: '#000000',
+    scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 1920,
+        height: 1080,
+        min: {
+            width: 960,
+            height: 540
+        },
+        max: {
+            width: 1920,
+            height: 1080
+        },
+        zoom: 1,        // Default zoom level (can be adjusted)
+        autoRound: true, // Round pixel values to avoid blurring
+        expandParent: true
+    },
     physics: {
         default: 'matter',
         matter: {
@@ -32,10 +49,40 @@ const config = {
         LoadingScene,
         GameScene,
         UIScene
-    ]
+    ],
+    // Disable right-click context menu on canvas
+    disableContextMenu: true
 };
 
 window.addEventListener('load', () => {
+    // Add CSS to prevent scrolling
+    const style = document.createElement('style');
+    style.textContent = `
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+        }
+        #game-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+    `;
+    document.head.appendChild(style);
+    
     // Create the game instance
     const game = new Phaser.Game(config);
     
@@ -45,6 +92,17 @@ window.addEventListener('load', () => {
     // Add browser info for debugging
     console.log('Browser:', navigator.userAgent);
     console.log('Phaser version:', Phaser.VERSION);
+    
+    // Listen for window resize events
+    window.addEventListener('resize', () => {
+        // Notify game scale manager to update size
+        if (game.scale) {
+            // Log the new dimensions
+            console.log(`Window resized: ${window.innerWidth}x${window.innerHeight}`);
+            // Update the scale
+            game.scale.refresh();
+        }
+    });
     
     // Listen for errors
     window.addEventListener('error', (event) => {

@@ -111,6 +111,9 @@ class LoadingScene extends Phaser.Scene {
                 this.load.image('levelBackground', 'assets/images/background.png');
                 this.load.image('chibi', 'assets/images/chibi_girl.png');
                 
+                // Load victory background image
+                this.load.image('victoryBackground', 'assets/images/victory_background.png');
+                
                 // Load game object images
                 this.load.image('slingshot', 'assets/images/slingshot.png');
                 this.load.image('bomb', 'assets/images/bomb.png');
@@ -277,6 +280,74 @@ class LoadingScene extends Phaser.Scene {
     
     createFallbackGameAssets() {
         // Create fallback assets for critical game objects
+        
+        // Create fallback background if needed
+        if (!this.textures.exists('levelBackground')) {
+            console.log("Creating fallback background texture");
+            const bg = this.add.graphics({ willReadFrequently: true });
+            
+            // Deep blue background
+            bg.fillStyle(0x001a33, 1);
+            bg.fillRect(0, 0, 1920, 1080);
+            
+            // Add some simple designs
+            bg.lineStyle(5, 0x0066cc, 0.5);
+            
+            // Make a grid pattern
+            for (let i = 0; i < 20; i++) {
+                // Horizontal lines
+                bg.moveTo(0, i * 60);
+                bg.lineTo(1920, i * 60);
+                
+                // Vertical lines
+                bg.moveTo(i * 100, 0);
+                bg.lineTo(i * 100, 1080);
+            }
+            
+            bg.generateTexture('levelBackground', 1920, 1080);
+            bg.clear();
+        }
+        
+        // Create fallback victory background if needed
+        if (!this.textures.exists('victoryBackground')) {
+            console.log("Creating fallback victory background texture");
+            const victoryBg = this.add.graphics({ willReadFrequently: true });
+            
+            // Create a warm colored victory background (golden sunrise feeling)
+            const gradientColors = [0xffd700, 0xff8c00, 0xff4500];
+            
+            // Create a radial gradient effect
+            for (let i = 0; i < 10; i++) {
+                const color = Phaser.Display.Color.Interpolate.ColorWithColor(
+                    { r: 255, g: 215, b: 0 },
+                    { r: 255, g: 69, b: 0 },
+                    10,
+                    i
+                );
+                
+                const rgb = Phaser.Display.Color.GetColor(color.r, color.g, color.b);
+                const alpha = 1 - (i * 0.1);
+                
+                victoryBg.fillStyle(rgb, alpha);
+                victoryBg.fillCircle(1920/2, 1080/2, 1000 - i * 80);
+            }
+            
+            // Add some "rays" of light
+            victoryBg.lineStyle(15, 0xffffff, 0.5);
+            for (let a = 0; a < 360; a += 15) {
+                const rad = a * Math.PI / 180;
+                const startX = 1920/2 + Math.cos(rad) * 200;
+                const startY = 1080/2 + Math.sin(rad) * 200;
+                const endX = 1920/2 + Math.cos(rad) * 900;
+                const endY = 1080/2 + Math.sin(rad) * 900;
+                
+                victoryBg.moveTo(startX, startY);
+                victoryBg.lineTo(endX, endY);
+            }
+            
+            victoryBg.generateTexture('victoryBackground', 1920, 1080);
+            victoryBg.clear();
+        }
         
         // Create fallback bomb if needed
         if (!this.textures.exists('bomb')) {

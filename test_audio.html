@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Audio Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio File Test</h1>
+    <p>This page tests playing the audio files directly.</p>
+    
+    <button id="testBgMusic">Test Background Music</button>
+    <button id="testVictoryMusic">Test Victory Music</button>
+    <button id="stopAll">Stop All Audio</button>
+    
+    <div class="status" id="status">Status: Ready to test</div>
+    
+    <script>
+        // Status display
+        const status = document.getElementById('status');
+        
+        // Audio elements
+        let bgMusic = null;
+        let victoryMusic = null;
+        
+        // Test background music
+        document.getElementById('testBgMusic').addEventListener('click', function() {
+            stopAllAudio();
+            
+            status.innerHTML = "Status: Loading background music...";
+            
+            bgMusic = new Audio('assets/audio/background_music.mp3');
+            bgMusic.volume = 0.5;
+            bgMusic.loop = true;
+            
+            bgMusic.oncanplaythrough = function() {
+                status.innerHTML = "Status: Background music loaded, playing...";
+                bgMusic.play()
+                    .then(() => {
+                        status.innerHTML = "Status: Background music playing";
+                    })
+                    .catch(error => {
+                        status.innerHTML = "Error playing background music: " + error.message;
+                        console.error("Error playing background music:", error);
+                    });
+            };
+            
+            bgMusic.onerror = function() {
+                status.innerHTML = "Error: Failed to load background music";
+            };
+        });
+        
+        // Test victory music
+        document.getElementById('testVictoryMusic').addEventListener('click', function() {
+            stopAllAudio();
+            
+            status.innerHTML = "Status: Loading victory music...";
+            
+            victoryMusic = new Audio('assets/audio/victory_music.mp3');
+            victoryMusic.volume = 0.5;
+            
+            victoryMusic.oncanplaythrough = function() {
+                status.innerHTML = "Status: Victory music loaded, playing...";
+                victoryMusic.play()
+                    .then(() => {
+                        status.innerHTML = "Status: Victory music playing";
+                    })
+                    .catch(error => {
+                        status.innerHTML = "Error playing victory music: " + error.message;
+                        console.error("Error playing victory music:", error);
+                    });
+            };
+            
+            victoryMusic.onerror = function() {
+                status.innerHTML = "Error: Failed to load victory music";
+            };
+        });
+        
+        // Stop all audio
+        document.getElementById('stopAll').addEventListener('click', function() {
+            stopAllAudio();
+            status.innerHTML = "Status: All audio stopped";
+        });
+        
+        function stopAllAudio() {
+            if (bgMusic) {
+                bgMusic.pause();
+                bgMusic.currentTime = 0;
+            }
+            
+            if (victoryMusic) {
+                victoryMusic.pause();
+                victoryMusic.currentTime = 0;
+            }
+        }
+    </script>
+</body>
+</html> 

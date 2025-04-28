@@ -35,13 +35,16 @@ const config = {
     },
     input: {
         activePointers: 3,        // Allow tracking multiple touches at once
-        smoothFactor: 0.2,        // Lower smoothing for more responsive touch
-        dragDistanceThreshold: 5, // Lower drag threshold for easier touch dragging
-        dragTimeThreshold: 150,   // Lower time threshold for easier touch dragging
+        smoothFactor: 0.1,        // Even lower smoothing for more responsive touch (0.2 -> 0.1)
+        dragDistanceThreshold: 2, // Lower drag distance threshold further for better sensitivity
+        dragTimeThreshold: 100,   // Lower time threshold for quicker response to dragging
         // Mobile-specific settings
         touch: {
             capture: true,        // Capture all touch events on the page
-            target: document.body // Set target to document.body for better touch event handling
+            target: document.body, // Set target to document.body for better touch event handling
+            tapInterval: 300,     // Shorter tap interval for more responsive controls
+            holdTime: 400,        // Shorter hold time for more responsive hold detection
+            preventDefaultMove: true // Prevent default move behavior for drag actions
         }
     },
     render: {

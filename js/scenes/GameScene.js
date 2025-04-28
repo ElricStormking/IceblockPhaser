@@ -516,22 +516,56 @@ class GameScene extends Phaser.Scene {
 
     setupInput() {
         try {
-            // Pointer down event
+            // Pointer down event - works for both mouse and touch
             this.input.on('pointerdown', (pointer) => {
                 try {
                     if (this.shotsRemaining <= 0 || !this.bomb || !this.bomb.visible) return;
                     
-                    // Check if click is near the bomb
+                    // Check if click/touch is near the bomb
                     const distance = Phaser.Math.Distance.Between(
                         pointer.x, pointer.y, 
                         this.bomb.x, this.bomb.y
                     );
                     
-                    if (distance < 50) {
+                    if (distance < 60) { // Increased touch area for mobile users
                         this.isAiming = true;
                         
                         // Keep the bomb static during aiming - we'll manually position it
                         this.bomb.setStatic(true);
+                        
+                        // Mobile touch feedback - pulse the bomb when touched
+                        this.tweens.add({
+                            targets: this.bomb,
+                            scale: { from: 1, to: 1.2 },
+                            duration: 100,
+                            yoyo: true,
+                            ease: 'Sine.easeInOut'
+                        });
+                        
+                        // Add touch indicator text for mobile users
+                        if (this.touchIndicator) this.touchIndicator.destroy();
+                        this.touchIndicator = this.add.text(
+                            this.bomb.x,
+                            this.bomb.y - 60,
+                            "Hold & Drag to Aim",
+                            {
+                                font: '16px Arial',
+                                fill: '#ffffff',
+                                stroke: '#000000',
+                                strokeThickness: 3
+                            }
+                        ).setOrigin(0.5).setDepth(20);
+                        
+                        // Fade out the indicator after a short delay
+                        this.tweens.add({
+                            targets: this.touchIndicator,
+                            alpha: 0,
+                            delay: 1000,
+                            duration: 500,
+                            onComplete: () => {
+                                if (this.touchIndicator) this.touchIndicator.destroy();
+                            }
+                        });
                         
                         if (this.debugMode && this.debugText) {
                             console.log('Aiming started');
@@ -543,14 +577,19 @@ class GameScene extends Phaser.Scene {
                 }
             });
             
-            // Pointer move event
+            // Pointer move event - works for both mouse and touch drag
             this.input.on('pointermove', (pointer) => {
                 try {
                     if (!this.isAiming || !this.bomb) return;
                     
+                    // Make sure we only process if pointer is down (for touch devices)
+                    if (!pointer.isDown && this.game.device.os.android) {
+                        return; // Skip if touch isn't active on Android devices
+                    }
+                    
                     // Calculate angle and distance from slingshot
                     const dx = this.SLINGSHOT_X - pointer.x;
-                    const dy = this.SLINGSHOT_Y - 30 - pointer.y; // Update to match bomb's initial position
+                    const dy = this.SLINGSHOT_Y - 30 - pointer.y;
                     const distance = Math.min(
                         this.MAX_DRAG_DISTANCE,
                         Math.sqrt(dx * dx + dy * dy)
@@ -565,6 +604,11 @@ class GameScene extends Phaser.Scene {
                     
                     // Update bomb position - keep it static while dragging
                     this.bomb.setPosition(bombX, bombY);
+                    
+                    // Update touch indicator position if it exists
+                    if (this.touchIndicator && this.touchIndicator.active) {
+                        this.touchIndicator.setPosition(bombX, bombY - 60);
+                    }
                     
                     if (this.debugMode && this.debugText) {
                         this.debugText.setText(`Aiming: position=${bombX.toFixed(1)},${bombY.toFixed(1)} | dx=${dx.toFixed(1)},dy=${dy.toFixed(1)}`);
@@ -593,10 +637,16 @@ class GameScene extends Phaser.Scene {
                 }
             });
             
-            // Pointer up event
+            // Pointer up event - works for both mouse and touch release
             this.input.on('pointerup', () => {
                 try {
                     if (!this.isAiming || !this.bomb) return;
+                    
+                    // Remove touch indicator if it exists
+                    if (this.touchIndicator) {
+                        this.touchIndicator.destroy();
+                        this.touchIndicator = null;
+                    }
                     
                     // Calculate force based on distance from slingshot
                     const dx = this.SLINGSHOT_X - this.bomb.x;
@@ -635,6 +685,11 @@ class GameScene extends Phaser.Scene {
                         // Create a new dynamic bomb at the same position
                         this.createDynamicBomb(bombX, bombY, bombType, forceX, forceY);
                         
+                        // Add haptic feedback for mobile devices if supported
+                        if (window.navigator && window.navigator.vibrate) {
+                            window.navigator.vibrate(100); // 100ms vibration on launch
+                        }
+                        
                         // Decrement bomb count
                         this.decrementBombCount(bombType);
                         
@@ -668,8 +723,85 @@ class GameScene extends Phaser.Scene {
                     console.error("Error in pointerup handler:", error);
                 }
             });
+
+            // Add specific handling for touch cancel events (important for mobile)
+            this.input.on('pointercancel', () => {
+                if (this.isAiming && this.bomb) {
+                    // Reset the bomb position if touch is cancelled
+                    this.isAiming = false;
+                    this.bomb.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                    
+                    // Clear visuals
+                    if (this.elasticLine) this.elasticLine.clear();
+                    if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
+                    if (this.touchIndicator) {
+                        this.touchIndicator.destroy();
+                        this.touchIndicator = null;
+                    }
+                }
+            });
+            
+            // Add a pulsing hint for mobile users when a new bomb is loaded
+            this.time.delayedCall(500, () => {
+                this.addMobilePulseHint();
+            });
+            
         } catch (error) {
             console.error("Error in setupInput:", error);
+        }
+    }
+    
+    // Add a pulsing hint for mobile users to show where to touch
+    addMobilePulseHint() {
+        if (!this.bomb || this.hintActive) return;
+        
+        // Only show on mobile devices
+        if (!this.game.device.os.desktop) {
+            this.hintActive = true;
+            
+            // Create a pulsing circle around the bomb
+            const hintCircle = this.add.circle(
+                this.bomb.x, 
+                this.bomb.y, 
+                30, 
+                0xffffff, 
+                0.5
+            ).setDepth(11);
+            
+            // Add a hint text
+            const hintText = this.add.text(
+                this.bomb.x,
+                this.bomb.y - 50,
+                "Tap & Drag",
+                {
+                    font: '18px Arial',
+                    fill: '#ffffff',
+                    stroke: '#000000',
+                    strokeThickness: 3
+                }
+            ).setOrigin(0.5).setDepth(11);
+            
+            // Pulse animation
+            this.tweens.add({
+                targets: [hintCircle],
+                scale: { from: 1, to: 1.5 },
+                alpha: { from: 0.5, to: 0 },
+                duration: 1000,
+                repeat: 3,
+                onComplete: () => {
+                    hintCircle.destroy();
+                    hintText.destroy();
+                    this.hintActive = false;
+                }
+            });
+            
+            // Fade text after animations
+            this.tweens.add({
+                targets: [hintText],
+                alpha: { from: 1, to: 0 },
+                delay: 3000,
+                duration: 1000
+            });
         }
     }
 
@@ -1497,6 +1629,11 @@ class GameScene extends Phaser.Scene {
             this.trajectoryGraphics.clear();
         }
         
+        // Clear any elastic lines
+        if (this.elasticLine) {
+            this.elasticLine.clear();
+        }
+        
         console.log("Creating new bomb. Current type:", this.currentBombType);
         
         // Create a new bomb at the slingshot position instead of the corner
@@ -1521,6 +1658,30 @@ class GameScene extends Phaser.Scene {
         
         this.bombHighlight = this.add.circle(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 32, 0xffff00, 0.3);
         this.bombHighlight.setDepth(11);
+        
+        // Mobile-specific visual indicator - add a pulse effect to show touchable area
+        if (!this.game.device.os.desktop) {
+            // Add pulsing effect to highlight the bomb for mobile users
+            this.tweens.add({
+                targets: this.bombHighlight,
+                alpha: { from: 0.3, to: 0.7 },
+                scale: { from: 1, to: 1.3 },
+                duration: 800,
+                yoyo: true,
+                repeat: 2,
+                onComplete: () => {
+                    if (this.bombHighlight) {
+                        this.bombHighlight.setAlpha(0.3);
+                        this.bombHighlight.setScale(1);
+                    }
+                }
+            });
+            
+            // Delay mobile hint to appear after the pulse animation
+            this.time.delayedCall(500, () => {
+                this.addMobilePulseHint();
+            });
+        }
         
         // Update the UI to show the current bomb type and shots remaining
         this.updateBombUI();

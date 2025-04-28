@@ -521,17 +521,63 @@ class GameScene extends Phaser.Scene {
                 try {
                     if (this.shotsRemaining <= 0 || !this.bomb || !this.bomb.visible) return;
                     
-                    // Check if click/touch is near the bomb
+                    // Immediately log touch events for debugging
+                    if (this.debugMode) {
+                        console.log('Pointer down detected:', 
+                            pointer.x, pointer.y, 
+                            'isMobile:', !this.game.device.os.desktop, 
+                            'type:', pointer.type);
+                    }
+                    
+                    // Check if click/touch is near the bomb - use larger detection area on mobile
+                    const touchRadius = this.game.device.os.desktop ? 60 : 100;
                     const distance = Phaser.Math.Distance.Between(
                         pointer.x, pointer.y, 
                         this.bomb.x, this.bomb.y
                     );
                     
-                    if (distance < 60) { // Increased touch area for mobile users
+                    if (distance < touchRadius) {
+                        // Provide immediate visual feedback
+                        this.bomb.setTint(0xffff00);
+                        
                         this.isAiming = true;
                         
                         // Keep the bomb static during aiming - we'll manually position it
                         this.bomb.setStatic(true);
+                        
+                        // For touch devices, immediately move the bomb to the touch position
+                        // This creates a more responsive feel
+                        if (!this.game.device.os.desktop) {
+                            // Calculate initial direction from slingshot
+                            const dx = this.SLINGSHOT_X - pointer.x;
+                            const dy = this.SLINGSHOT_Y - 30 - pointer.y;
+                            const distance = Math.min(
+                                this.MAX_DRAG_DISTANCE,
+                                Math.sqrt(dx * dx + dy * dy)
+                            );
+                            
+                            // Calculate angle
+                            const angle = Math.atan2(dy, dx);
+                            
+                            // Calculate bomb position
+                            const bombX = this.SLINGSHOT_X - distance * Math.cos(angle);
+                            const bombY = (this.SLINGSHOT_Y - 30) - distance * Math.sin(angle);
+                            
+                            // Update bomb position immediately
+                            this.bomb.setPosition(bombX, bombY);
+                            
+                            // Draw elastic line immediately
+                            if (this.elasticLine) {
+                                this.elasticLine.clear();
+                                this.elasticLine.lineStyle(3, 0xFF0000);
+                                this.elasticLine.beginPath();
+                                this.elasticLine.moveTo(this.SLINGSHOT_X - 10, this.SLINGSHOT_Y - 30);
+                                this.elasticLine.lineTo(bombX, bombY);
+                                this.elasticLine.moveTo(this.SLINGSHOT_X + 10, this.SLINGSHOT_Y - 30);
+                                this.elasticLine.lineTo(bombX, bombY);
+                                this.elasticLine.stroke();
+                            }
+                        }
                         
                         // Mobile touch feedback - pulse the bomb when touched
                         this.tweens.add({
@@ -569,7 +615,7 @@ class GameScene extends Phaser.Scene {
                         
                         if (this.debugMode && this.debugText) {
                             console.log('Aiming started');
-                            this.debugText.setText(`Aiming started at ${pointer.x},${pointer.y}`);
+                            this.debugText.setText(`Aiming started at ${pointer.x},${pointer.y} | distance: ${distance}`);
                         }
                     }
                 } catch (error) {
@@ -582,9 +628,10 @@ class GameScene extends Phaser.Scene {
                 try {
                     if (!this.isAiming || !this.bomb) return;
                     
-                    // Make sure we only process if pointer is down (for touch devices)
-                    if (!pointer.isDown && this.game.device.os.android) {
-                        return; // Skip if touch isn't active on Android devices
+                    // On all mobile devices, make sure the pointer is down
+                    // This fixes the issue where dragging doesn't work with press and hold
+                    if (!pointer.isDown && !this.game.device.os.desktop) {
+                        return; // Skip if touch isn't active on mobile devices
                     }
                     
                     // Calculate angle and distance from slingshot
@@ -605,13 +652,19 @@ class GameScene extends Phaser.Scene {
                     // Update bomb position - keep it static while dragging
                     this.bomb.setPosition(bombX, bombY);
                     
+                    // Add debug info for touch events if in debug mode
+                    if (this.debugMode && this.debugText) {
+                        this.debugText.setText(
+                            `Aiming: pos=${bombX.toFixed(1)},${bombY.toFixed(1)} | ` +
+                            `dx=${dx.toFixed(1)},dy=${dy.toFixed(1)} | ` +
+                            `pointer.isDown=${pointer.isDown} | ` +
+                            `mobile=${!this.game.device.os.desktop}`
+                        );
+                    }
+                    
                     // Update touch indicator position if it exists
                     if (this.touchIndicator && this.touchIndicator.active) {
                         this.touchIndicator.setPosition(bombX, bombY - 60);
-                    }
-                    
-                    if (this.debugMode && this.debugText) {
-                        this.debugText.setText(`Aiming: position=${bombX.toFixed(1)},${bombY.toFixed(1)} | dx=${dx.toFixed(1)},dy=${dy.toFixed(1)}`);
                     }
                     
                     // Draw elastic line
@@ -638,9 +691,22 @@ class GameScene extends Phaser.Scene {
             });
             
             // Pointer up event - works for both mouse and touch release
-            this.input.on('pointerup', () => {
+            this.input.on('pointerup', (pointer) => {
                 try {
                     if (!this.isAiming || !this.bomb) return;
+                    
+                    // Immediately log touch release for debugging
+                    if (this.debugMode) {
+                        console.log('Pointer up detected:', 
+                            pointer.x, pointer.y, 
+                            'isMobile:', !this.game.device.os.desktop,
+                            'downTime:', pointer.downTime,
+                            'upTime:', pointer.upTime,
+                            'type:', pointer.type);
+                    }
+                    
+                    // Clear any tint applied during pointerdown
+                    this.bomb.clearTint();
                     
                     // Remove touch indicator if it exists
                     if (this.touchIndicator) {
@@ -652,13 +718,30 @@ class GameScene extends Phaser.Scene {
                     const dx = this.SLINGSHOT_X - this.bomb.x;
                     const dy = (this.SLINGSHOT_Y - 30) - this.bomb.y;
                     
+                    // Check if the drag distance is significant enough to launch
+                    const dragDistance = Math.sqrt(dx * dx + dy * dy);
+                    if (dragDistance < 10 && !this.game.device.os.desktop) {
+                        // If barely moved on mobile, don't launch - just consider it a tap
+                        if (this.debugMode) {
+                            console.log('Drag distance too small, not launching:', dragDistance);
+                        }
+                        // Reset position
+                        this.bomb.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                        this.isAiming = false;
+                        
+                        // Clear visual elements
+                        if (this.elasticLine) this.elasticLine.clear();
+                        if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
+                        return;
+                    }
+                    
                     // Scale by shot power
                     const forceX = dx * this.SHOT_POWER * 0.01;
                     const forceY = dy * this.SHOT_POWER * 0.01;
                     
                     if (this.debugMode && this.debugText) {
-                        console.log('Launching bomb with force:', forceX, forceY);
-                        this.debugText.setText(`Launch: force=${forceX.toFixed(3)},${forceY.toFixed(3)}`);
+                        console.log('Launching bomb with force:', forceX, forceY, 'distance:', dragDistance);
+                        this.debugText.setText(`Launch: force=${forceX.toFixed(3)},${forceY.toFixed(3)} | distance=${dragDistance.toFixed(1)}`);
                     }
                     
                     // Clear elastic line

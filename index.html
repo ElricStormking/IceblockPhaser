@@ -101,6 +101,52 @@
             setTimeout(function() {
                 document.getElementById('loading-screen').classList.add('hidden');
             }, 1000);
+            
+            // Detect touch capabilities
+            const isTouchDevice = ('ontouchstart' in window) || 
+                                (navigator.maxTouchPoints > 0) || 
+                                (navigator.msMaxTouchPoints > 0);
+            
+            console.log('Touch device detected:', isTouchDevice);
+            console.log('Touch points available:', navigator.maxTouchPoints);
+            console.log('User agent:', navigator.userAgent);
+            
+            // Set up touch debugging if needed
+            if (isTouchDevice) {
+                // Add a debug helper that shows touch points (only in debug mode)
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.has('debug')) {
+                    console.log('Touch debugging enabled');
+                    
+                    // Create touch visualization element
+                    const touchDebug = document.createElement('div');
+                    touchDebug.id = 'touch-debug';
+                    touchDebug.style.position = 'absolute';
+                    touchDebug.style.top = '10px';
+                    touchDebug.style.left = '10px';
+                    touchDebug.style.color = 'white';
+                    touchDebug.style.background = 'rgba(0,0,0,0.5)';
+                    touchDebug.style.padding = '5px';
+                    touchDebug.style.zIndex = '9999';
+                    touchDebug.style.pointerEvents = 'none';
+                    document.body.appendChild(touchDebug);
+                    
+                    // Track and display touch events
+                    document.addEventListener('touchstart', function(e) {
+                        touchDebug.textContent = `Touch start: ${e.touches.length} touches`;
+                        e.preventDefault(); // Prevent default to ensure our game gets all events
+                    }, {passive: false});
+                    
+                    document.addEventListener('touchmove', function(e) {
+                        touchDebug.textContent = `Touch move: ${e.touches.length} touches, ${e.touches[0].clientX.toFixed(0)},${e.touches[0].clientY.toFixed(0)}`;
+                        e.preventDefault();
+                    }, {passive: false});
+                    
+                    document.addEventListener('touchend', function(e) {
+                        touchDebug.textContent = `Touch end: ${e.touches.length} remaining`;
+                    }, {passive: false});
+                }
+            }
         });
         
         // Prevent scrolling on mobile devices

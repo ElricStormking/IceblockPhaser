@@ -6,15 +6,39 @@ class GameScene extends Phaser.Scene {
         this.SLINGSHOT_X = 300; // Keep at 300 (positioned on left side)
         this.SLINGSHOT_Y = 800; // Keep at same height
         this.MAX_DRAG_DISTANCE = 200;
-        this.SHOT_POWER = 0.3; // Increased from 0.2 to 0.3 for longer shots
+        this.SHOT_POWER = 0.13; // Increased shot power (from 0.07)
         this.MAX_SHOTS = 10;
         this.shotsRemaining = this.MAX_SHOTS;
         this.isAiming = false;
         this.revealPercentage = 0;
-        this.targetPercentage = 80;
+        this.targetPercentage = 85;
         this.UI_DEPTH = 1000; // UI depth for consistent layering
         this.isLevelComplete = false;
         this.isGameOver = false;
+        
+        // Add bomb state tracking to prevent stuck game state
+        this.bombState = {
+            active: false,
+            lastResetTime: 0,
+            lastBombFired: 0,
+            pendingReset: null,
+            maxIdleTime: 20000, // Auto-reset if bomb is idle for 20 seconds
+            autoResetTimer: null
+        };
+        
+        // Add developer method to refresh UI
+        if (window) {
+            window.refreshGameUI = () => {
+                console.log('Forcing UI refresh...');
+                if (this.bombSelectorContainer) {
+                    this.bombSelectorContainer.destroy();
+                    this.bombSelectorContainer = null;
+                }
+                this.createBombSelector();
+                console.log('UI refreshed!');
+                return 'UI refreshed successfully!';
+            };
+        }
         
         // Audio properties
         this.bgMusic = null;
@@ -26,7 +50,8 @@ class GameScene extends Phaser.Scene {
             PIERCER: 'piercer_bomb',
             CLUSTER: 'cluster_bomb',
             STICKY: 'sticky_bomb',
-            SHATTERER: 'shatterer_bomb'
+            SHATTERER: 'shatterer_bomb',
+            DRILLER: 'driller_bomb'  // Add Driller Girl bomb type
         };
         
         // Bomb names based on Game Design Document
@@ -35,16 +60,18 @@ class GameScene extends Phaser.Scene {
             [this.BOMB_TYPES.PIERCER]: 'Piercer Girl',
             [this.BOMB_TYPES.CLUSTER]: 'Cluster Girl',
             [this.BOMB_TYPES.STICKY]: 'Sticky Girl',
-            [this.BOMB_TYPES.SHATTERER]: 'Shatterer Girl'
+            [this.BOMB_TYPES.SHATTERER]: 'Shatterer Girl',
+            [this.BOMB_TYPES.DRILLER]: 'Driller Girl'  // Add Driller Girl name
         };
         
         // Remaining bombs of each type
         this.bombsRemaining = {
-            [this.BOMB_TYPES.BLAST]: 10,
-            [this.BOMB_TYPES.PIERCER]: 7,
-            [this.BOMB_TYPES.CLUSTER]: 5,
-            [this.BOMB_TYPES.STICKY]: 3,
-            [this.BOMB_TYPES.SHATTERER]: 2
+            [this.BOMB_TYPES.BLAST]: 3,
+            [this.BOMB_TYPES.PIERCER]: 5,
+            [this.BOMB_TYPES.CLUSTER]: 1,
+            [this.BOMB_TYPES.STICKY]: 5,
+            [this.BOMB_TYPES.SHATTERER]: 1,
+            [this.BOMB_TYPES.DRILLER]: 3  // Add initial count for Driller Girl bombs
         };
         
         // Current selected bomb type
@@ -59,12 +86,14 @@ class GameScene extends Phaser.Scene {
 
     create() {
         try {
+            // Clear any cached textures or game objects to ensure fresh UI
+            this.game.textures.list = this.textures.list;
+            
             // Setup camera to show the full 1920x1080 game world
             this.setupCamera();
             
-            // Setup world physics
-            this.matter.world.setBounds(0, 0, this.cameras.main.width, this.cameras.main.height);
-            this.matter.world.setGravity(0, 1);
+            // Set zero gravity (world bounds are set in setupCamera)
+            this.matter.world.setGravity(0, 0); // Zero gravity for space-like environment
 
             // Initialize arrays for game objects
             this.activeStickyBombs = [];
@@ -95,6 +124,12 @@ class GameScene extends Phaser.Scene {
             
             // Directly initialize audio (simpler approach)
             this.initializeAudio();
+            
+            // Create bouncy blocks boundary - removed
+            // this.createBoundaryBouncyBlocks();
+            
+            // Setup global failsafe timer to detect stuck game states
+            this.setupGlobalFailsafe();
             
             // Debug text display - moved to bottom of screen
             if (this.debugMode) {
@@ -148,13 +183,15 @@ class GameScene extends Phaser.Scene {
         // Only include UI elements in this camera (depth >= UI_DEPTH)
         this.uiCamera.ignore(this.children.list.filter(item => item.depth < this.UI_DEPTH));
         
-        // Ensure our world physics matches our camera bounds
-        this.matter.world.setBounds(0, 0, gameWidth, gameHeight);
+        // Ensure our world physics is larger than our camera bounds to prevent bombs from hitting invisible walls
+        // Extend the physics world by 2000 pixels in each direction
+        this.matter.world.setBounds(-2000, -2000, gameWidth + 4000, gameHeight + 4000);
         
         // Debug camera bounds if in debug mode
         if (this.debugMode) {
             console.log(`Main camera bounds: 0, 0, ${gameWidth}, ${gameHeight}`);
             console.log(`UI camera bounds: 0, 0, ${gameWidth}, ${gameHeight}`);
+            console.log(`Physics world bounds: -2000, -2000, ${gameWidth + 4000}, ${gameHeight + 4000}`);
             console.log(`UI depth: ${this.UI_DEPTH}`);
         }
     }
@@ -351,6 +388,40 @@ class GameScene extends Phaser.Scene {
             }
         }
         
+        // Prepare to create exactly 3 dynamite blocks
+        const dynamitePositions = [];
+        const validPositions = [];
+        
+        // Collect all valid block positions first
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                if (blockGrid[row][col]) {
+                    const blockScreenX = imageX + col * blockSize + blockSize / 2;
+                    const blockScreenY = imageY + row * blockSize + blockSize / 2;
+                    validPositions.push({x: blockScreenX, y: blockScreenY, row, col});
+                }
+            }
+        }
+        
+        // Pick 3 random positions for dynamite blocks (if we have enough blocks)
+        if (validPositions.length > 3) {
+            // Shuffle the array to get random positions
+            for (let i = validPositions.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [validPositions[i], validPositions[j]] = [validPositions[j], validPositions[i]];
+            }
+            
+            // Take the first 3 positions for dynamite
+            for (let i = 0; i < 3; i++) {
+                dynamitePositions.push({
+                    x: validPositions[i].x,
+                    y: validPositions[i].y,
+                    row: validPositions[i].row,
+                    col: validPositions[i].col
+                });
+            }
+        }
+        
         // Third pass: Create blocks based on our grid
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
@@ -360,12 +431,39 @@ class GameScene extends Phaser.Scene {
                 const blockScreenX = imageX + col * blockSize + blockSize / 2;
                 const blockScreenY = imageY + row * blockSize + blockSize / 2;
                 
-                // Create ice block
-                const block = this.matter.add.image(blockScreenX, blockScreenY, 'iceBlock', null, {
+                // Determine block type
+                let blockType = 'standard'; // Default is standard
+                
+                // Check if this position is one of our dynamite positions
+                const isDynamite = dynamitePositions.some(pos => 
+                    pos.row === row && pos.col === col);
+                
+                if (isDynamite) {
+                    blockType = 'dynamite';
+                } else {
+                    // For non-dynamite blocks, use weighted random for other special types
+                    let blockTypeRand = Math.random();
+                    if (blockTypeRand < 0.02) {
+                        blockType = 'eternal';
+                    } else if (blockTypeRand < 0.08) {
+                        blockType = 'strong';
+                    }
+                }
+                
+                // Base physics properties
+                let physicsProps = {
                     isStatic: true,
-                    friction: 0.01,
+                    friction: 0.01, 
                     restitution: 0.3
-                });
+                };
+                
+                // Adjust properties based on block type
+                if (blockType === 'bouncy') {
+                    physicsProps.restitution = 1.0; // Bouncy blocks have high restitution
+                }
+                
+                // Create ice block
+                const block = this.matter.add.image(blockScreenX, blockScreenY, 'iceBlock', null, physicsProps);
                 
                 // Scale the blocks to match the new size
                 block.setScale(blockSize / 40); // Original ice block is 40x40, scale up
@@ -377,17 +475,69 @@ class GameScene extends Phaser.Scene {
                 
                 // Set blocks to appear above the chibi image but below UI
                 block.setDepth(4); // Higher than chibi (1) and blocksContainer (2) and blue veils (3)
-                block.setAlpha(0.5);
-                block.isActive = true;
                 
-                // Create a blue veil rectangle for this block
+                // Initialize block properties based on type
+                block.isActive = true;
+                block.blockType = blockType;
+                
+                // Set specific properties based on block type
+                let veilColor, veilAlpha;
+                
+                switch(blockType) {
+                    case 'eternal':
+                        block.hitsLeft = 3;
+                        veilColor = 0x3333cc; // Dark blue
+                        veilAlpha = 0.9;
+                        break;
+                    case 'strong':
+                        block.hitsLeft = 2;
+                        veilColor = 0x6666dd; // Medium blue
+                        veilAlpha = 0.85;
+                        break;
+                    case 'dynamite':
+                        block.hitsLeft = 1;
+                        veilColor = 0xdd3333; // Red
+                        veilAlpha = 0.85;
+                        // Add a bit of pulsing to the dynamite block
+                        this.tweens.add({
+                            targets: block,
+                            alpha: 0.7,
+                            yoyo: true,
+                            repeat: -1,
+                            duration: 600
+                        });
+                        break;
+                    case 'bouncy': 
+                        // This case is still used by boundary bouncy blocks
+                        block.hitsLeft = 1;
+                        veilColor = 0x00cc44; // Green color
+                        veilAlpha = 0.9;
+                        // Add pulsating effect like the boundary bouncy blocks
+                        this.tweens.add({
+                            targets: block,
+                            alpha: { from: 0.5, to: 0.8 },
+                            yoyo: true,
+                            repeat: -1,
+                            duration: 1500,
+                            ease: 'Sine.easeInOut'
+                        });
+                        break;
+                    default: // standard
+                        block.hitsLeft = 1;
+                        veilColor = 0xaaddff; // Default light blue
+                        veilAlpha = 0.85;
+                }
+                
+                block.setAlpha(0.5);
+                
+                // Create a blue veil rectangle for this block with type-specific color
                 const blueVeil = this.add.rectangle(
                     blockScreenX, 
                     blockScreenY, 
                     blockSize, 
                     blockSize, 
-                    0xaaddff, // Lighter, more ice-like blue color
-                    0.85 // Much less transparent (higher opacity)
+                    veilColor,
+                    veilAlpha
                 );
                 
                 // Add an ice-like texture effect with highlights
@@ -422,6 +572,8 @@ class GameScene extends Phaser.Scene {
         this.revealPercentage = 0;
         
         console.log(`Created ${this.iceBlocks.length} ice blocks with blue veils`);
+        // Log the number of dynamite blocks created
+        console.log(`Created exactly ${dynamitePositions.length} dynamite blocks`);
     }
 
     createIceTextureEffect(veil) {
@@ -504,10 +656,13 @@ class GameScene extends Phaser.Scene {
         // Create inactive bomb at slingshot position - simple settings
         this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 'bomb', null);
         
-        this.bomb.setCircle();
+        this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
         this.bomb.setStatic(true);
         this.bomb.setVisible(true);
         this.bomb.setDepth(12); // Above slingshot and elastic line
+        
+        // Set bomb size to 60x60 (reduced from 80x80)
+        this.bomb.setDisplaySize(60, 60);
         
         if (this.debugMode) {
             console.log("Bomb created:", this.bomb);
@@ -530,7 +685,7 @@ class GameScene extends Phaser.Scene {
                     }
                     
                     // Check if click/touch is near the bomb - use larger detection area on mobile
-                    const touchRadius = this.game.device.os.desktop ? 60 : 100;
+                    const touchRadius = this.game.device.os.desktop ? 80 : 120;
                     const distance = Phaser.Math.Distance.Between(
                         pointer.x, pointer.y, 
                         this.bomb.x, this.bomb.y
@@ -924,6 +1079,7 @@ class GameScene extends Phaser.Scene {
                 const pairs = event.pairs;
                 let hasExploded = false;
                 let bombStuck = false;
+                let bombReflected = false;
                 
                 for (let i = 0; i < pairs.length; i++) {
                     try {
@@ -960,58 +1116,78 @@ class GameScene extends Phaser.Scene {
                             if (this.bomb) {
                                 this.bomb.hasHitIceBlock = true;
                             }
+                            
+                            // Check if it's a bouncy block
+                            if (block.blockType === 'bouncy') {
+                                // Handle bounce logic except for sticky bombs
+                                const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
+                                
+                                if (bombType !== this.BOMB_TYPES.STICKY) {
+                                    this.handleBouncyBlock(block, this.bomb);
+                                    bombReflected = true;
+                                    continue; // Skip normal bomb behavior
+                                }
+                            }
                         }
                         
-                        // Get the bomb type
-                        const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
-                        
-                        // Handle different bomb types
-                        if (!hasExploded && !bombStuck) {
-                            switch(bombType) {
-                                case this.BOMB_TYPES.BLAST:
-                                    // Standard explosion with radius damage
-                                    this.handleBlastBomb(this.bomb.x, this.bomb.y);
-                                    hasExploded = true;
-                                    break;
-                                    
-                                case this.BOMB_TYPES.PIERCER:
-                                    // Creates a line of destruction in its direction
-                                    this.handlePiercerBomb(this.bomb.x, this.bomb.y);
-                                    hasExploded = true;
-                                    break;
-                                    
-                                case this.BOMB_TYPES.CLUSTER:
-                                    // Creates multiple smaller explosions
-                                    this.handleClusterBomb(this.bomb.x, this.bomb.y);
-                                    hasExploded = true;
-                                    break;
-                                    
-                                case this.BOMB_TYPES.STICKY:
-                                    // Sticks to a block and explodes after delay
-                                    if (block && block.isActive && this.iceBlocks.includes(block)) {
-                                        // Store bomb for visual retention
-                                        const stickyBombVisual = this.bomb;
-                                        // Handle sticky behavior
-                                        this.handleStickyBomb(this.bomb.x, this.bomb.y, block);
-                                        bombStuck = true;
-                                    } else {
-                                        // If not sticking to a valid target, just explode
+                        // Only proceed with normal bomb handling if not reflected
+                        if (!bombReflected) {
+                            // Get the bomb type
+                            const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
+                            
+                            // Handle different bomb types
+                            if (!hasExploded && !bombStuck) {
+                                switch(bombType) {
+                                    case this.BOMB_TYPES.BLAST:
+                                        // Standard explosion with radius damage
                                         this.handleBlastBomb(this.bomb.x, this.bomb.y);
                                         hasExploded = true;
-                                    }
-                                    break;
-                                    
-                                case this.BOMB_TYPES.SHATTERER:
-                                    // Creates a powerful blast that's effective against tough blocks
-                                    this.handleShattererBomb(this.bomb.x, this.bomb.y);
-                                    hasExploded = true;
-                                    break;
-                            }
-                            
-                            // Destroy the bomb if it exploded (not if it's sticky and stuck)
-                            if (hasExploded && this.bomb) {
-                                this.bomb.destroy();
-                                this.bomb = null;
+                                        break;
+                                        
+                                    case this.BOMB_TYPES.PIERCER:
+                                        // Creates a line of destruction in its direction
+                                        this.handlePiercerBomb(this.bomb.x, this.bomb.y);
+                                        hasExploded = true;
+                                        break;
+                                        
+                                    case this.BOMB_TYPES.CLUSTER:
+                                        // Creates multiple smaller explosions
+                                        this.handleClusterBomb(this.bomb.x, this.bomb.y);
+                                        hasExploded = true;
+                                        break;
+                                        
+                                    case this.BOMB_TYPES.STICKY:
+                                        // Sticks to a block and explodes after delay
+                                        if (block && block.isActive && this.iceBlocks.includes(block)) {
+                                            // Store bomb for visual retention
+                                            const stickyBombVisual = this.bomb;
+                                            // Handle sticky behavior
+                                            this.handleStickyBomb(this.bomb.x, this.bomb.y, block);
+                                            bombStuck = true;
+                                        } else {
+                                            // If not sticking to a valid target, just explode
+                                            this.handleBlastBomb(this.bomb.x, this.bomb.y);
+                                            hasExploded = true;
+                                        }
+                                        break;
+                                        
+                                    case this.BOMB_TYPES.SHATTERER:
+                                        // Creates a powerful blast that's effective against tough blocks
+                                        this.handleShattererBomb(this.bomb.x, this.bomb.y);
+                                        hasExploded = true;
+                                        break;
+                                    case this.BOMB_TYPES.DRILLER:
+                                        // Handle the driller bomb specially if it collides with a block
+                                        this.handleDrillerBomb(this.bomb.x, this.bomb.y, block);
+                                        hasExploded = true;
+                                        break;
+                                }
+                                
+                                // Destroy the bomb if it exploded (not if it's sticky and stuck)
+                                if (hasExploded && this.bomb) {
+                                    this.bomb.destroy();
+                                    this.bomb = null;
+                                }
                             }
                         }
                     } catch (error) {
@@ -1162,6 +1338,8 @@ class GameScene extends Phaser.Scene {
         
         // Create a list to track blocks to be destroyed
         const blocksToDestroy = [];
+        const blocksToDamage = [];
+        const dynamiteToTrigger = [];
         
         // Check distance of each block from explosion center
         this.iceBlocks.forEach(block => {
@@ -1169,9 +1347,26 @@ class GameScene extends Phaser.Scene {
                 const distance = Phaser.Math.Distance.Between(x, y, block.x, block.y);
                 
                 if (distance < radius) {
-                    // Calculate delay based on distance (closer blocks explode faster)
-                    const delay = (distance / radius) * 100;
-                    blocksToDestroy.push({ block, delay });
+                    if (block.blockType === 'dynamite') {
+                        // Add dynamite blocks to a special trigger list
+                        // with a short delay so they explode sequentially
+                        const delay = (distance / radius) * 50; // shorter delay for chain reactions
+                        dynamiteToTrigger.push({ block, delay });
+                    } else if (block.blockType === 'bouncy') {
+                        // Bouncy blocks don't get destroyed, they reflect bombs
+                        // However, we'll add a visual indication they were hit
+                        this.time.delayedCall(10, () => {
+                            this.createBouncyHitEffect(block.x, block.y);
+                        });
+                    } else if (block.blockType === 'eternal' || block.blockType === 'strong') {
+                        // Add multi-hit blocks to damage list
+                        const delay = (distance / radius) * 100;
+                        blocksToDamage.push({ block, delay });
+                    } else {
+                        // Regular blocks get destroyed
+                        const delay = (distance / radius) * 100;
+                        blocksToDestroy.push({ block, delay });
+                    }
                 }
             }
         });
@@ -1181,6 +1376,31 @@ class GameScene extends Phaser.Scene {
             this.time.delayedCall(delay, () => {
                 if (block && block.isActive) {
                     this.destroyIceBlock(block);
+                }
+            });
+        });
+        
+        // Process block damage with delays
+        blocksToDamage.forEach(({ block, delay }) => {
+            this.time.delayedCall(delay, () => {
+                if (block && block.isActive) {
+                    this.damageIceBlock(block);
+                }
+            });
+        });
+        
+        // Process dynamite triggers with delays
+        dynamiteToTrigger.forEach(({ block, delay }) => {
+            this.time.delayedCall(delay, () => {
+                if (block && block.isActive) {
+                    // Create explosion at dynamite location
+                    this.createExplosion(block.x, block.y);
+                    
+                    // Destroy the dynamite block
+                    this.destroyIceBlock(block);
+                    
+                    // Destroy additional blocks in radius
+                    this.destroyBlocksInRadius(block.x, block.y, 120); // Dynamite has smaller radius
                 }
             });
         });
@@ -1237,7 +1457,7 @@ class GameScene extends Phaser.Scene {
                 });
             }
             
-            // Start a tween to fade out the blue veil over 8 seconds
+            // Start a tween to fade out the blue veil over 5 seconds
             this.tweens.add({
                 targets: block.blueVeil,
                 alpha: 0,
@@ -1250,6 +1470,12 @@ class GameScene extends Phaser.Scene {
                     }
                 }
             });
+        }
+        
+        // Special effects based on block type
+        if (block.blockType === 'dynamite') {
+            // Dynamite blocks get additional particle effects
+            this.createDynamiteDestroyEffect(block.x, block.y);
         }
         
         // Ensure chibi image remains fully opaque
@@ -1695,52 +1921,82 @@ class GameScene extends Phaser.Scene {
     }
 
     resetBomb() {
-        // Remove any existing bomb
+        // Update bomb state tracking
+        this.bombState.lastResetTime = Date.now();
+        
+        // First ensure any existing bomb is properly destroyed
         if (this.bomb) {
-            console.log("Destroying existing bomb before creating a new one");
-            this.bomb.destroy();
+            if (this.debugMode) {
+                console.log("Cleaning up existing bomb before reset:", this.bomb.x, this.bomb.y);
+            }
+            
+            // Make sure to properly clean up the old bomb
+            if (this.bomb.scene) {
+                this.bomb.destroy();
+            }
+            this.bomb = null;
         }
         
-        // Cancel any miss timer if it exists
+        // Cancel any pending bomb timers
         if (this.bombMissTimer) {
             this.bombMissTimer.remove();
             this.bombMissTimer = null;
         }
         
-        // Clear any trajectory graphics
-        if (this.trajectoryGraphics) {
-            this.trajectoryGraphics.clear();
+        // Add a fail-safe cleanup for any stuck bomb state
+        if (this.pendingReset) {
+            if (this.debugMode) {
+                console.log("Canceling pending reset - resolving stuck state");
+            }
+            clearTimeout(this.pendingReset);
+            this.pendingReset = null;
         }
         
-        // Clear any elastic lines
-        if (this.elasticLine) {
-            this.elasticLine.clear();
+        // Reset bomb state tracking
+        this.bombState.pendingReset = null;
+        
+        // Make sure we have shots remaining, otherwise check completion
+        if (this.shotsRemaining <= 0) {
+            if (this.debugMode) {
+                console.log("No shots remaining, checking level completion instead of resetting");
+            }
+            this.checkLevelCompletion();
+            return;
         }
         
-        console.log("Creating new bomb. Current type:", this.currentBombType);
+        console.log("Creating bomb");
         
-        // Create a new bomb at the slingshot position instead of the corner
+        // Create inactive bomb at slingshot position - simple settings
         this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, this.currentBombType);
-        this.bomb.setDepth(12);
+        
+        this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
+        this.bomb.setStatic(true);
+        this.bomb.setVisible(true);
+        this.bomb.setDepth(12); // Above slingshot and elastic line
+        
+        // Set bomb size to 60x60 (reduced from 80x80)
+        this.bomb.setDisplaySize(60, 60);
         
         // Mark this bomb as not launched (static at slingshot)
         this.bomb.isLaunched = false;
         this.bomb.hasHitIceBlock = false;
         
-        // Set it to be static until the user starts dragging it
-        this.bomb.setStatic(true);
-        
         // Make it draggable
         this.bomb.setInteractive();
         this.input.setDraggable(this.bomb);
         
-        // Visual indicator for bomb selection
-        if (this.bombHighlight) {
-            this.bombHighlight.destroy();
-        }
+        // Update bomb state
+        this.bombState.active = true;
         
-        this.bombHighlight = this.add.circle(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 32, 0xffff00, 0.3);
-        this.bombHighlight.setDepth(11);
+        // Create a highlight pulse effect for the bomb
+        if (!this.bombHighlight) {
+            this.bombHighlight = this.add.circle(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 35, 0xffff00, 0.3);
+            this.bombHighlight.setDepth(11); // Below the bomb
+        } else {
+            this.bombHighlight.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+            this.bombHighlight.setAlpha(0.3);
+            this.bombHighlight.setScale(1);
+        }
         
         // Mobile-specific visual indicator - add a pulse effect to show touchable area
         if (!this.game.device.os.desktop) {
@@ -1800,37 +2056,65 @@ class GameScene extends Phaser.Scene {
     }
     
     createDynamicBomb(x, y, bombType, forceX, forceY) {
+        // Update bomb state tracking
+        this.bombState.lastBombFired = Date.now();
+        
         // Set bomb properties based on type
         let bombProperties = {
-            restitution: 0.7,
-            friction: 0.05,
-            density: 0.002,
-            frictionAir: 0.001
+            restitution: 0.9, // Increased for better bouncing in ultra-low gravity
+            friction: 0.01, // Reduced for less surface friction
+            density: 0.0003, // Keep the same density
+            frictionAir: 0.0004 // Reduced to 1% of original value (0.04 → 0.0004)
         };
         
         // Adjust properties for special bomb types
         switch(bombType) {
             case this.BOMB_TYPES.PIERCER:
                 // Piercer has lower friction and higher density
-                bombProperties.friction = 0.01;
-                bombProperties.frictionAir = 0.0005;
-                bombProperties.density = 0.003;
+                bombProperties.friction = 0.002;
+                bombProperties.frictionAir = 0.0003; // Reduced to 1% of original value (0.03 → 0.0003)
+                bombProperties.density = 0.0005;
                 break;
                 
             case this.BOMB_TYPES.CLUSTER:
                 // Cluster is a bit lighter
-                bombProperties.density = 0.0015;
+                bombProperties.density = 0.0002;
+                bombProperties.frictionAir = 0.0005; // Reduced to 1% of original value (0.05 → 0.0005)
+                break;
+                
+            case this.BOMB_TYPES.STICKY:
+                // Sticky bombs should be a bit lighter too
+                bombProperties.density = 0.0003;
+                bombProperties.frictionAir = 0.0004; // Reduced to 1% of original value (0.04 → 0.0004)
+                break;
+                
+            case this.BOMB_TYPES.SHATTERER:
+                // Shatterer is heavier but still needs adjustment
+                bombProperties.density = 0.0004;
+                bombProperties.frictionAir = 0.00036; // Reduced to 1% of original value (0.036 → 0.00036)
+                break;
+                
+            case this.BOMB_TYPES.DRILLER:
+                // Driller needs good momentum
+                bombProperties.density = 0.0004;
+                bombProperties.frictionAir = 0.0003; // Reduced to 1% of original value (0.03 → 0.0003)
                 break;
         }
         
         // Create the bomb with appropriate properties - use bombType directly as it already contains the correct texture name
         this.bomb = this.matter.add.image(x, y, bombType, null, bombProperties);
-        this.bomb.setCircle();
+        this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
         this.bomb.bombType = bombType; // Store the bomb type for later use
         this.bomb.setDepth(12); // Same depth as static bomb
         
+        // Set bomb size to 60x60 (reduced from 80x80)
+        this.bomb.setDisplaySize(60, 60);
+        
         // Mark as a launched bomb (not static at slingshot)
         this.bomb.isLaunched = true;
+        
+        // Update bomb state
+        this.bombState.active = true;
         
         // Apply impulse (instant force)
         this.matter.body.applyForce(this.bomb.body, 
@@ -1841,32 +2125,64 @@ class GameScene extends Phaser.Scene {
         this.bomb.launchTime = this.time.now;
         this.bomb.hasHitIceBlock = false;
         
-        // Set up a timer to check for missed bombs after 8 seconds
-        this.bombMissTimer = this.time.delayedCall(8000, () => {
+        // Set up a timer to check for missed bombs after 15 seconds (increased from 8 seconds)
+        this.bombMissTimer = this.time.delayedCall(15000, () => {
             // If the bomb still exists, is launched, and hasn't hit an ice block, consider it a miss
             if (this.bomb && this.bomb.isLaunched && !this.bomb.hasHitIceBlock) {
                 if (this.debugMode) {
-                    console.log("Bomb missed all ice blocks for 8 seconds, destroying it");
+                    console.log("Bomb missed all ice blocks for 15 seconds, destroying it");
                 }
                 
                 // Create a small "fizzle" effect
                 this.createFizzleEffect(this.bomb.x, this.bomb.y);
                 
                 // Destroy the bomb
-                this.bomb.destroy();
+                if (this.bomb && this.bomb.scene) {
+                    this.bomb.destroy();
+                }
                 this.bomb = null;
                 
-                // Reset bomb for next shot if shots remain
-                this.time.delayedCall(1000, () => {
+                // Update bomb state
+                this.bombState.active = false;
+                
+                // Reset bomb for next shot if shots remain after a small delay
+                // Store the timeout ID so we can cancel it if needed
+                if (this.pendingReset) {
+                    clearTimeout(this.pendingReset);
+                }
+                
+                // Record when we're scheduling a pending reset
+                this.bombState.pendingReset = Date.now();
+                
+                this.pendingReset = setTimeout(() => {
+                    this.pendingReset = null;
+                    this.bombState.pendingReset = null;
+                    
                     if (this.shotsRemaining > 0) {
                         this.resetBomb();
                     } else {
                         // Check level completion or game over if no shots remain
                         this.checkLevelCompletion();
                     }
-                });
+                }, 1000);
             }
         });
+        
+        // Set up an emergency auto-reset timer as a fallback
+        // This ensures that even if all other systems fail, we'll still reset after a maximum time
+        if (this.bombState.autoResetTimer) {
+            clearTimeout(this.bombState.autoResetTimer);
+        }
+        
+        this.bombState.autoResetTimer = setTimeout(() => {
+            // Only run if the current bomb is still the one we created
+            if (this.bomb && this.bomb.isLaunched && !this.bomb.hasHitIceBlock) {
+                if (this.debugMode) {
+                    console.warn("EMERGENCY AUTO-RESET: Bomb active too long, forcing reset");
+                }
+                this.forceResetGameState();
+            }
+        }, this.bombState.maxIdleTime);
         
         // Fallback: try direct velocity set if needed
         if (this.debugMode) {
@@ -1999,7 +2315,8 @@ class GameScene extends Phaser.Scene {
             [this.BOMB_TYPES.PIERCER]: 7,
             [this.BOMB_TYPES.CLUSTER]: 5,
             [this.BOMB_TYPES.STICKY]: 3,
-            [this.BOMB_TYPES.SHATTERER]: 2
+            [this.BOMB_TYPES.SHATTERER]: 2,
+            [this.BOMB_TYPES.DRILLER]: 3  // Add initial count for Driller Girl bombs
         };
         
         // Update bomb counter displays
@@ -2106,65 +2423,111 @@ class GameScene extends Phaser.Scene {
     
     update() {
         try {
-            // Skip if the bomb is static or doesn't exist
-            if (!this.bomb || this.bomb.isStatic) return;
-            
-            // Check if bomb is out of bounds
-            if (this.bomb.y > 1080 || this.bomb.x < 0 || this.bomb.x > 1920) {
-                if (this.debugMode && this.debugText) {
-                    console.log("Bomb out of bounds, resetting", this.bomb.x, this.bomb.y);
-                    this.debugText.setText(`Bomb out of bounds at ${this.bomb.x.toFixed(1)},${this.bomb.y.toFixed(1)}`);
+            // Check if bomb exists
+            if (this.bomb && this.bomb.isLaunched) {
+                // Check if bomb is outside the world bounds
+                if (this.bomb.x < 0 || this.bomb.x > this.cameras.main.width ||
+                    this.bomb.y < 0 || this.bomb.y > this.cameras.main.height) {
+                    
+                    // Only log if debug mode is on
+                    if (this.debugMode) {
+                        console.log("Bomb outside world bounds, resetting.");
+                    }
+                    
+                    // Create a small visual effect where the bomb exited
+                    this.createFizzleEffect(
+                        Phaser.Math.Clamp(this.bomb.x, 10, this.cameras.main.width - 10),
+                        Phaser.Math.Clamp(this.bomb.y, 10, this.cameras.main.height - 10)
+                    );
+                    
+                    // Auto-reset to allow the player to continue quickly
+                    this.resetBomb();
+                    return;
                 }
                 
-                // Cancel any miss timer if it exists
-                if (this.bombMissTimer) {
-                    this.bombMissTimer.remove();
-                    this.bombMissTimer = null;
+                // Check if the bomb has nearly stopped moving in midair
+                if (this.bomb.body) {
+                    const velocityMagnitude = Math.sqrt(
+                        this.bomb.body.velocity.x * this.bomb.body.velocity.x + 
+                        this.bomb.body.velocity.y * this.bomb.body.velocity.y
+                    );
+                    
+                    // If the bomb's velocity is near zero and it hasn't hit an ice block
+                    if (velocityMagnitude < 0.5 && !this.bomb.hasHitIceBlock) {
+                        // Wait a short moment to confirm the bomb is truly stopped
+                        if (!this.bomb.stoppedTime) {
+                            this.bomb.stoppedTime = this.time.now;
+                        } else if (this.time.now - this.bomb.stoppedTime > 500) { // Wait 500ms to confirm it's stopped
+                            if (this.debugMode) {
+                                console.log("Bomb stopped moving in midair, exploding.");
+                            }
+                            
+                            // Get the bomb's current position
+                            const bombX = this.bomb.x;
+                            const bombY = this.bomb.y;
+                            
+                            // Get the bomb type
+                            const bombType = this.bomb.bombType || this.BOMB_TYPES.BLAST;
+                            
+                            // Create a small visual effect to indicate auto-explosion
+                            this.add.circle(bombX, bombY, 20, 0xffff00, 0.8)
+                                .setDepth(15)
+                                .setAlpha(0.8);
+                            
+                            // Handle the explosion based on bomb type
+                            switch(bombType) {
+                                case this.BOMB_TYPES.BLAST:
+                                    this.handleBlastBomb(bombX, bombY);
+                                    break;
+                                case this.BOMB_TYPES.PIERCER:
+                                    this.handlePiercerBomb(bombX, bombY);
+                                    break;
+                                case this.BOMB_TYPES.CLUSTER:
+                                    this.handleClusterBomb(bombX, bombY);
+                                    break;
+                                case this.BOMB_TYPES.STICKY:
+                                    this.handleBlastBomb(bombX, bombY); // Fallback to blast if no block to stick to
+                                    break;
+                                case this.BOMB_TYPES.SHATTERER:
+                                    this.handleShattererBomb(bombX, bombY);
+                                    break;
+                                case this.BOMB_TYPES.DRILLER:
+                                    this.handleBlastBomb(bombX, bombY); // Fallback to blast if no block to drill
+                                    break;
+                                default:
+                                    this.handleBlastBomb(bombX, bombY);
+                            }
+                            
+                            // Destroy the bomb
+                            this.bomb.destroy();
+                            this.bomb = null;
+                            
+                            // Schedule a reset after a short delay
+                            this.time.delayedCall(1000, () => {
+                                this.resetBomb();
+                            });
+                        }
+                    } else {
+                        // Reset the stopped time if the bomb is moving
+                        this.bomb.stoppedTime = null;
+                    }
                 }
-                
-                // Create a small "fizzle" effect since the bomb went off-screen
-                this.createFizzleEffect(this.bomb.x, Math.min(this.bomb.y, 1080 - 10));
-                
-                // Destroy the bomb
-                this.bomb.destroy();
-                this.bomb = null;
-                
-                // Reset for next shot if we have shots remaining
-                if (this.shotsRemaining > 0) {
-                    this.time.delayedCall(1000, () => {
-                        this.resetBomb();
-                    });
-                } else {
-                    this.checkLevelCompletion(); // This will now also check for game over
-                }
-                return;
             }
             
-            // If bomb is in motion, update debug info
-            if (this.debugMode && this.debugText) {
-                // Get current velocity
-                const velocity = this.bomb.body.velocity;
-                
-                // Update debug text with position and velocity
-                this.debugText.setText(
-                    `Bomb: pos=${this.bomb.x.toFixed(1)},${this.bomb.y.toFixed(1)} | ` +
-                    `vel=${velocity.x.toFixed(2)},${velocity.y.toFixed(2)}`
-                );
-                
-                // If bomb is very slow/stuck, prod it a bit
-                if (Math.abs(velocity.x) < 0.1 && Math.abs(velocity.y) < 0.1 && 
-                    !this.bomb.isStatic && this.bomb.y < 580) {
-                    console.log("Bomb seems stuck, applying small impulse");
-                    this.matter.body.applyForce(this.bomb.body, 
-                        { x: this.bomb.x, y: this.bomb.y }, 
-                        { x: 0, y: 0.001 });
-                }
+            // Update sticky bomb particles if any exist
+            if (this.activeStickyBombs && this.activeStickyBombs.length > 0) {
+                this.activeStickyBombs.forEach(bomb => {
+                    if (bomb.isActive && bomb.emitter) {
+                        try {
+                            bomb.emitter.setPosition(bomb.x, bomb.y);
+                        } catch (e) {
+                            // Handle potential errors with removed emitters
+                        }
+                    }
+                });
             }
         } catch (error) {
-            console.error("Error in update:", error);
-            if (this.debugText) {
-                this.debugText.setText(`ERROR: ${error.message}`);
-            }
+            console.error("Error in update loop:", error);
         }
     }
     
@@ -2192,6 +2555,33 @@ class GameScene extends Phaser.Scene {
             this.ui = null;
             
             console.log("GameScene initialized with data:", data);
+            
+            // Carry over data from previous scenes
+            if (data) {
+                // Handle any input from parent scene
+                this.levelNumber = data.levelNumber || 1;
+                if (this.debugMode) {
+                    console.log(`Starting level ${this.levelNumber}`);
+                }
+                
+                // Force cleanup of any existing UI
+                if (this.bombSelectorContainer) {
+                    this.bombSelectorContainer.destroy();
+                    this.bombSelectorContainer = null;
+                    
+                    // Force clear references to buttons
+                    this.blastButton = null;
+                    this.piercerButton = null;
+                    this.clusterButton = null;
+                    this.stickyButton = null;
+                    this.shattererButton = null;
+                    this.drillerButton = null;
+                    this.selectionIndicator = null;
+                }
+            }
+            
+            // Initialize bomb data
+            this.setupBombs();
         } catch (error) {
             console.error("Error in init:", error);
         }
@@ -2201,12 +2591,12 @@ class GameScene extends Phaser.Scene {
         // Create bomb selection buttons at the bottom of the screen
         // Ensuring they're well within the visible 1920x1080 area
         const gameHeight = 1080;
-        const buttonY = gameHeight - 100; // Position 100px from bottom edge (was 60px)
-        const spacing = 120; // Increase spacing for better visibility
+        const buttonY = gameHeight - 90; // Position 90px from bottom edge (reduced from 100px)
+        const spacing = 130; // Reduce spacing for smaller buttons (was 160)
         
         // Calculate starting X position to center the bomb selector
         const gameWidth = 1920;
-        const startX = gameWidth / 2 - (spacing * 2); // Center the 5 buttons
+        const startX = gameWidth / 2 - (spacing * 2.5); // Center the 6 buttons
         
         // Create a container for the bomb selector UI with proper depth
         this.bombSelectorContainer = this.add.container(0, 0);
@@ -2217,7 +2607,7 @@ class GameScene extends Phaser.Scene {
             gameWidth / 2,
             buttonY,
             gameWidth,
-            120,
+            100, // Smaller height (was 120)
             0x000000,
             0.5 // Reduced opacity from 0.7 to 0.5 for better visibility
         );
@@ -2237,20 +2627,22 @@ class GameScene extends Phaser.Scene {
             [this.BOMB_TYPES.PIERCER]: 0x44aaff,   // Blue for piercer
             [this.BOMB_TYPES.CLUSTER]: 0xffaa44,   // Orange for cluster
             [this.BOMB_TYPES.STICKY]: 0x44ff44,    // Green for sticky
-            [this.BOMB_TYPES.SHATTERER]: 0xaa44ff  // Purple for shatterer
+            [this.BOMB_TYPES.SHATTERER]: 0xaa44ff,  // Purple for shatterer
+            [this.BOMB_TYPES.DRILLER]: 0xBB5500    // Brown for driller
         };
         
         // Create buttons with proper positioning and ensure they're in front of the background
         const createBombButton = (x, y, bombType) => {
             // Create the button with depth higher than background
             const button = this.add.image(x, y, bombType)
-                .setScale(1.2)
+                .setScale(1.0) // Reduced from 1.2
+                .setDisplaySize(60, 60) // Reduced from 80x80 to 60x60
                 .setInteractive()
                 .setDepth(this.UI_DEPTH + 1); // Ensure buttons are in front of background
             
             // Add a subtle highlight/glow effect behind the button using the bomb's color
             const glowColor = bombColors[bombType] || 0xffffff;
-            const glow = this.add.circle(x, y, 28, glowColor, 0.3);
+            const glow = this.add.circle(x, y, 22, glowColor, 0.3); // Reduced from radius 28 to 22
             glow.setDepth(this.UI_DEPTH); // Between background and button
             this.bombSelectorContainer.add(glow);
             
@@ -2258,34 +2650,34 @@ class GameScene extends Phaser.Scene {
             
             // Bomb name style with stronger contrast
             const nameStyle = {
-                font: '14px Arial',
+                font: '12px Arial', // Reduced from 14px to 12px
                 fill: '#ffffff',
                 stroke: '#000000',
-                strokeThickness: 4, // Increased from 3 for better visibility
+                strokeThickness: 3, // Reduced from 4
                 shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
             };
             
             // Counter style with better visibility
             const counterStyle = {
-                font: '14px Arial',
+                font: '12px Arial', // Reduced from 14px to 12px
                 fill: '#ffff00',
                 stroke: '#000000',
-                strokeThickness: 3, // Increased from 2 for better visibility
+                strokeThickness: 2, // Reduced from 3
                 shadow: { offsetX: 1, offsetY: 1, color: '#000000', blur: 2, fill: true }
             };
             
             // Create the name label below the button
             const nameLabel = this.add.text(
                 x,
-                y + 20,
+                y + 18, // Reduced from 20 to 18
                 this.BOMB_NAMES[bombType],
                 nameStyle
-            ).setOrigin(0.5).setDepth(this.UI_DEPTH + 1); // Ensure text is in front
+            ).setOrigin(0.5).setDepth(this.UI_DEPTH + 1);
             
             // Create the counter label above the button
             const counterLabel = this.add.text(
                 x,
-                y - 20,
+                y - 18, // Reduced from 20 to 18
                 `x${this.bombsRemaining[bombType]}`,
                 counterStyle
             ).setOrigin(0.5).setDepth(this.UI_DEPTH + 1); // Ensure text is in front
@@ -2311,6 +2703,7 @@ class GameScene extends Phaser.Scene {
         this.clusterButton = createBombButton(startX + spacing * 2, buttonY, this.BOMB_TYPES.CLUSTER);
         this.stickyButton = createBombButton(startX + spacing * 3, buttonY, this.BOMB_TYPES.STICKY);
         this.shattererButton = createBombButton(startX + spacing * 4, buttonY, this.BOMB_TYPES.SHATTERER);
+        this.drillerButton = createBombButton(startX + spacing * 5, buttonY, this.BOMB_TYPES.DRILLER);
         
         // Default selection
         this.updateBombSelection();
@@ -2346,11 +2739,12 @@ class GameScene extends Phaser.Scene {
     updateBombSelection() {
         // Update button appearances to show selection
         // Scale selected button slightly larger and use brighter tint
-        this.blastButton.setScale(this.currentBombType === this.BOMB_TYPES.BLAST ? 1.4 : 1.2);
-        this.piercerButton.setScale(this.currentBombType === this.BOMB_TYPES.PIERCER ? 1.4 : 1.2);
-        this.clusterButton.setScale(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 1.4 : 1.2);
-        this.stickyButton.setScale(this.currentBombType === this.BOMB_TYPES.STICKY ? 1.4 : 1.2);
-        this.shattererButton.setScale(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 1.4 : 1.2);
+        this.blastButton.setScale(this.currentBombType === this.BOMB_TYPES.BLAST ? 1.15 : 1.0); // Reduced from 1.4/1.2 to 1.15/1.0
+        this.piercerButton.setScale(this.currentBombType === this.BOMB_TYPES.PIERCER ? 1.15 : 1.0);
+        this.clusterButton.setScale(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 1.15 : 1.0);
+        this.stickyButton.setScale(this.currentBombType === this.BOMB_TYPES.STICKY ? 1.15 : 1.0);
+        this.shattererButton.setScale(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 1.15 : 1.0);
+        this.drillerButton.setScale(this.currentBombType === this.BOMB_TYPES.DRILLER ? 1.15 : 1.0);
         
         // Add glow to selected bomb - use bright white for selected, dimmer for others
         this.blastButton.setTint(this.currentBombType === this.BOMB_TYPES.BLAST ? 0xffffff : 0xbbbbbb);
@@ -2358,6 +2752,7 @@ class GameScene extends Phaser.Scene {
         this.clusterButton.setTint(this.currentBombType === this.BOMB_TYPES.CLUSTER ? 0xffffff : 0xbbbbbb);
         this.stickyButton.setTint(this.currentBombType === this.BOMB_TYPES.STICKY ? 0xffffff : 0xbbbbbb);
         this.shattererButton.setTint(this.currentBombType === this.BOMB_TYPES.SHATTERER ? 0xffffff : 0xbbbbbb);
+        this.drillerButton.setTint(this.currentBombType === this.BOMB_TYPES.DRILLER ? 0xffffff : 0xbbbbbb);
         
         // Animate the glow effects
         const buttons = [
@@ -2365,7 +2760,8 @@ class GameScene extends Phaser.Scene {
             this.piercerButton, 
             this.clusterButton,
             this.stickyButton,
-            this.shattererButton
+            this.shattererButton,
+            this.drillerButton
         ];
         
         // Apply animation to each button's glow effect
@@ -2380,7 +2776,8 @@ class GameScene extends Phaser.Scene {
                     (button === this.piercerButton && this.currentBombType === this.BOMB_TYPES.PIERCER) ||
                     (button === this.clusterButton && this.currentBombType === this.BOMB_TYPES.CLUSTER) ||
                     (button === this.stickyButton && this.currentBombType === this.BOMB_TYPES.STICKY) ||
-                    (button === this.shattererButton && this.currentBombType === this.BOMB_TYPES.SHATTERER)
+                    (button === this.shattererButton && this.currentBombType === this.BOMB_TYPES.SHATTERER) ||
+                    (button === this.drillerButton && this.currentBombType === this.BOMB_TYPES.DRILLER)
                 );
                 
                 if (isSelected) {
@@ -2405,7 +2802,7 @@ class GameScene extends Phaser.Scene {
         // Create or update selection indicator
         if (!this.selectionIndicator) {
             // Create a highlight circle behind the selected bomb
-            this.selectionIndicator = this.add.circle(0, 0, 30, 0xffff00, 0.4);
+            this.selectionIndicator = this.add.circle(0, 0, 35, 0xffff00, 0.4); // Reduced from radius 45 to 35
             this.selectionIndicator.setDepth(this.UI_DEPTH);
             this.bombSelectorContainer.add(this.selectionIndicator);
         }
@@ -2427,6 +2824,9 @@ class GameScene extends Phaser.Scene {
                 break;
             case this.BOMB_TYPES.SHATTERER:
                 selectedButton = this.shattererButton;
+                break;
+            case this.BOMB_TYPES.DRILLER:
+                selectedButton = this.drillerButton;
                 break;
         }
         
@@ -2562,41 +2962,99 @@ class GameScene extends Phaser.Scene {
     triggerStickyBomb(x, y, radius) {
         if (!this.activeStickyBombs || this.activeStickyBombs.length === 0) return;
         
-        // Check if any sticky bombs are within the explosion radius
-        const triggeredBombs = [];
+        // First pass: check specifically for driller bombs in a much wider radius
+        // This ensures driller bombs are triggered more reliably
+        const drillerCheckRadius = radius * 3;
+        const allTriggeredBombs = [];
         
-        this.activeStickyBombs.forEach(stickyBomb => {
-            if (stickyBomb.isActive) {
-                const distance = Phaser.Math.Distance.Between(x, y, stickyBomb.x, stickyBomb.y);
-                if (distance < radius) {
-                    // This sticky bomb is triggered
-                    triggeredBombs.push(stickyBomb);
+        // First check for driller bombs with a much larger radius
+        this.activeStickyBombs.forEach(bomb => {
+            if (!bomb.isActive) return;
+            
+            if (bomb.isDriller) {
+                const distance = Phaser.Math.Distance.Between(x, y, bomb.x, bomb.y);
+                if (distance < drillerCheckRadius) {
+                    allTriggeredBombs.push(bomb);
+                    
+                    // Mark as inactive immediately to prevent double-triggering
+                    bomb.isActive = false;
+                    
+                    // Visual debug effect to show trigger range
+                    if (this.debugMode) {
+                        console.log(`DRILLER TRIGGERED at ${bomb.x},${bomb.y} - distance: ${distance.toFixed(2)}, drillerCheckRadius: ${drillerCheckRadius}`);
+                        
+                        // Create a temporary visual indicator of trigger radius
+                        const radiusVisual = this.add.circle(x, y, drillerCheckRadius, 0xFF9900, 0.2);
+                        radiusVisual.setDepth(20);
+                        this.tweens.add({
+                            targets: radiusVisual,
+                            alpha: 0,
+                            duration: 500,
+                            onComplete: () => radiusVisual.destroy()
+                        });
+                        
+                        // Draw line to triggered driller bomb
+                        const line = this.add.graphics();
+                        line.lineStyle(3, 0xFF9900, 0.8);
+                        line.beginPath();
+                        line.moveTo(x, y);
+                        line.lineTo(bomb.x, bomb.y);
+                        line.strokePath();
+                        line.setDepth(20);
+                        this.tweens.add({
+                            targets: line,
+                            alpha: 0,
+                            duration: 500,
+                            onComplete: () => line.destroy()
+                        });
+                    }
                 }
             }
         });
         
-        // Process triggered bombs
-        triggeredBombs.forEach(stickyBomb => {
-            // Mark as inactive
-            stickyBomb.isActive = false;
+        // Second pass: check for regular sticky bombs with normal radius
+        this.activeStickyBombs.forEach(bomb => {
+            if (!bomb.isActive || bomb.isDriller) return; // Skip driller bombs as we already processed them
             
-            // Remove from active array
-            this.activeStickyBombs = this.activeStickyBombs.filter(bomb => bomb !== stickyBomb);
-            
-            // Clean up visual effects
-            if (stickyBomb.visualEffect) stickyBomb.visualEffect.destroy();
-            if (stickyBomb.particles) stickyBomb.particles.destroy();
-            
-            // Destroy the bomb sprite if it exists
-            if (stickyBomb.bombSprite && stickyBomb.bombSprite.scene) {
-                stickyBomb.bombSprite.destroy();
+            const distance = Phaser.Math.Distance.Between(x, y, bomb.x, bomb.y);
+            if (distance < radius) {
+                allTriggeredBombs.push(bomb);
+                
+                // Mark as inactive immediately to prevent double-triggering
+                bomb.isActive = false;
+                
+                if (this.debugMode) {
+                    console.log(`Regular sticky bomb triggered at ${bomb.x},${bomb.y} - distance: ${distance.toFixed(2)}, radius: ${radius}`);
+                }
             }
-            
-            // Create bigger explosion
-            this.createLargeExplosion(stickyBomb.x, stickyBomb.y);
-            
-            // Destroy blocks in a wider radius
-            this.destroyBlocksInRadius(stickyBomb.x, stickyBomb.y, stickyBomb.explosionRadius);
+        });
+        
+        // Update active sticky bombs list BEFORE processing explosions to prevent cascading issues
+        this.activeStickyBombs = this.activeStickyBombs.filter(bomb => bomb.isActive);
+        
+        if (this.debugMode) {
+            console.log(`Processing ${allTriggeredBombs.length} triggered bombs. Remaining active bombs: ${this.activeStickyBombs.length}`);
+        }
+        
+        // Process all triggered bombs
+        allTriggeredBombs.forEach(bomb => {
+            try {
+                // Ensure all visual resources are properly cleaned up
+                this.cleanupBombResources(bomb);
+                
+                // Create appropriate explosion based on bomb type
+                if (bomb.isDriller) {
+                    // Special effects for driller bomb explosion
+                    this.createDrillerExplosion(bomb.x, bomb.y);
+                    this.destroyBlocksInRadius(bomb.x, bomb.y, bomb.explosionRadius || 380);
+                } else {
+                    // Standard sticky bomb explosion
+                    this.createLargeExplosion(bomb.x, bomb.y);
+                    this.destroyBlocksInRadius(bomb.x, bomb.y, bomb.explosionRadius || 440);
+                }
+            } catch (error) {
+                console.error(`Error processing triggered bomb:`, error);
+            }
         });
     }
     
@@ -2715,8 +3173,8 @@ class GameScene extends Phaser.Scene {
         // Emit particles in a single burst
         emitter.explode(50, x, y);
         
-        // Destroy blocks in a wide radius with higher intensity
-        this.destroyBlocksInRadius(x, y, 250);
+        // For Shatterer bomb, we'll handle block destruction differently to reflect its power
+        this.destroyBlocksWithShatterer(x, y, 250);
         
         // Check for sticky bombs in a wide radius with high chance to trigger
         this.triggerStickyBomb(x, y, 300);
@@ -2738,6 +3196,115 @@ class GameScene extends Phaser.Scene {
                 console.log("Sound not available:", e);
             }
         }
+    }
+    
+    // New method to handle the special destruction properties of the Shatterer bomb
+    destroyBlocksWithShatterer(x, y, radius) {
+        if (!this.iceBlocks) return;
+        
+        // Create a list to track blocks to be destroyed
+        const blocksToDestroy = [];
+        const dynamiteToTrigger = [];
+        
+        // Check distance of each block from explosion center
+        this.iceBlocks.forEach(block => {
+            if (block && block.isActive) {
+                const distance = Phaser.Math.Distance.Between(x, y, block.x, block.y);
+                
+                if (distance < radius) {
+                    if (block.blockType === 'dynamite') {
+                        // Add dynamite blocks to a special trigger list
+                        const delay = (distance / radius) * 50; // shorter delay for chain reactions
+                        dynamiteToTrigger.push({ block, delay });
+                    } else if (block.blockType === 'bouncy') {
+                        // Bouncy blocks don't get destroyed by Shatterer either, just show they were hit
+                        this.time.delayedCall(10, () => {
+                            this.createBouncyHitEffect(block.x, block.y);
+                        });
+                    } else {
+                        // All other blocks (including Eternal and Strong) get destroyed in one hit
+                        // by the Shatterer bomb
+                        const delay = (distance / radius) * 100;
+                        blocksToDestroy.push({ block, delay });
+                    }
+                }
+            }
+        });
+        
+        // Process block destruction with delays
+        blocksToDestroy.forEach(({ block, delay }) => {
+            this.time.delayedCall(delay, () => {
+                if (block && block.isActive) {
+                    // If Eternal or Strong, play special effect before destruction
+                    if (block.blockType === 'eternal' || block.blockType === 'strong') {
+                        this.createShattererImpactEffect(block.x, block.y);
+                    }
+                    this.destroyIceBlock(block); // Destroy in one hit regardless of type
+                }
+            });
+        });
+        
+        // Process dynamite triggers with delays
+        dynamiteToTrigger.forEach(({ block, delay }) => {
+            this.time.delayedCall(delay, () => {
+                if (block && block.isActive) {
+                    // Create explosion at dynamite location
+                    this.createExplosion(block.x, block.y);
+                    
+                    // Destroy the dynamite block
+                    this.destroyIceBlock(block);
+                    
+                    // Destroy additional blocks in radius
+                    this.destroyBlocksInRadius(block.x, block.y, 120); // Dynamite has smaller radius
+                }
+            });
+        });
+        
+        // Clean up the iceBlocks array after a delay
+        this.time.delayedCall(1000, () => {
+            this.cleanupIceBlocksArray();
+        });
+    }
+    
+    // New method to create a special effect for the Shatterer's impact on strong/eternal blocks
+    createShattererImpactEffect(x, y) {
+        // Create a red flash to indicate the powerful impact
+        const flash = this.add.circle(x, y, 30, 0xcc3333, 0.7);
+        flash.setDepth(6);
+        this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            scale: 1.5,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Add crack particles
+        const particles = this.add.particles('particle');
+        particles.setDepth(6);
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 60, max: 120 },
+            scale: { start: 0.8, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 400,
+            blendMode: 'ADD',
+            tint: [0xcccccc, 0xff3333, 0xffffff] // White/red/white for shattering impact
+        });
+        
+        // Emit particles from the block center
+        emitter.explode(15, x, y);
+        
+        // Clean up particles after use
+        this.time.delayedCall(500, () => {
+            particles.destroy();
+        });
+        
+        // Add a small camera pulse for feedback
+        this.cameras.main.shake(150, 0.005);
     }
 
     initializeAudio() {
@@ -2960,39 +3527,52 @@ class GameScene extends Phaser.Scene {
             // Clear previous trajectory
             this.trajectoryGraphics.clear();
             
-            // Number of points to predict - greatly increased for much longer trajectory
-            const numPoints = 120; // Increased from 100 to 120 for even longer trajectory
+            // Number of points to predict - increased for moon trajectory
+            const numPoints = 200; // Increased from 120 for much longer moon trajectory
             
             // Time step for each predicted point (in seconds)
             const timeStep = 0.1; // Reduced time step to make points closer together
             
             // Get physics properties based on current bomb type
-            let density = 0.002; // Default density
-            let frictionAir = 0.001; // Default air friction
+            let density = 0.0003; // Default density for moon physics
+            let frictionAir = 0.008; // Increased 4x from 0.002 for trajectory prediction
             
             // Adjust properties for special bomb types to match their actual physics
             switch(this.currentBombType) {
                 case this.BOMB_TYPES.PIERCER:
-                    density = 0.003;
-                    frictionAir = 0.0005;
+                    density = 0.0005;
+                    frictionAir = 0.006; // Increased 4x from 0.0015
                     break;
                 case this.BOMB_TYPES.CLUSTER:
-                    density = 0.0015;
+                    density = 0.0002;
+                    frictionAir = 0.01; // Increased 4x from 0.0025
+                    break;
+                case this.BOMB_TYPES.STICKY:
+                    density = 0.0003;
+                    frictionAir = 0.008; // Increased 4x from 0.002
+                    break;
+                case this.BOMB_TYPES.SHATTERER:
+                    density = 0.0004;
+                    frictionAir = 0.0072; // Increased 4x from 0.0018
+                    break;
+                case this.BOMB_TYPES.DRILLER:
+                    density = 0.0004;
+                    frictionAir = 0.006; // Increased 4x from 0.0015
                     break;
             }
             
             // Gravity from the physics world - safely access with fallback value
-            let gravityY = 1; // Default gravity
+            let gravityY = 0.008; // Quarter of moon gravity (reduced from 0.08)
             try {
-                gravityY = this.matter.world.localWorld.gravity.y || 1;
+                gravityY = this.matter.world.localWorld.gravity.y || 0.008;
             } catch (error) {
                 console.warn("Could not access physics world gravity, using default:", error);
             }
             
             // Scale factor for velocity - safely access with fallback value
-            let forceScale = 60; // Default scale
+            let forceScale = 40; // Reduced from 60 for better moon trajectory prediction
             try {
-                forceScale = (this.matter.world.localWorld.body?.global?.translateForceToPts || 1) * 60;
+                forceScale = (this.matter.world.localWorld.body?.global?.translateForceToPts || 1) * 40;
             } catch (error) {
                 console.warn("Could not access physics force scale, using default:", error);
             }
@@ -3353,5 +3933,863 @@ class GameScene extends Phaser.Scene {
                 0.7
             ).setDepth(2);
         }
+    }
+
+    handleDrillerBomb(x, y, block) {
+        // Create a visual driller effect to show bomb has started drilling
+        const drillerEffect = this.add.circle(x, y, 25, 0xBB5500, 0.7);
+        drillerEffect.setDepth(15);
+        
+        // Animate the driller effect to rotate
+        this.tweens.add({
+            targets: drillerEffect,
+            angle: 360,
+            duration: 1000,
+            ease: 'Linear',
+            repeat: -1 // Repeat forever until removed
+        });
+        
+        // Add particles for drilling effect
+        const particles = this.add.particles('particle');
+        const emitter = particles.createEmitter({
+            speed: { min: 10, max: 30 },
+            scale: { start: 0.3, end: 0 },
+            alpha: { start: 0.7, end: 0 },
+            lifespan: 800,
+            blendMode: 'ADD',
+            tint: 0xBB5500, // Brown/orange tint for drill
+            frequency: 100, // Emit particles frequently
+            quantity: 2
+        });
+        
+        // Set particle emission point
+        emitter.setPosition(x, y);
+        
+        // Keep a reference to the original bomb sprite and velocity
+        let bombSprite = null;
+        let velocityX = 0;
+        let velocityY = 0;
+        
+        if (this.bomb) {
+            // Get the bomb's velocity before making it static
+            velocityX = this.bomb.body.velocity.x;
+            velocityY = this.bomb.body.velocity.y;
+            
+            // Fix the bomb in place
+            this.bomb.setStatic(true);
+            
+            // Store reference to the bomb sprite
+            bombSprite = this.bomb;
+            
+            // Destroy original bomb reference - but not the visual
+            this.bomb = null;
+            if (this.debugMode) {
+                console.log("Driller bomb placed, this.bomb reference cleared");
+            }
+        }
+        
+        // Get the direction from the bomb's velocity vector
+        let directionX = 1; // Default right direction
+        let directionY = 0;
+        
+        // Use the bomb's velocity to determine drilling direction
+        const velocityMag = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
+        if (velocityMag > 0.1) { // Only use velocity if it's significant
+            // Normalize the velocity vector
+            directionX = velocityX / velocityMag;
+            directionY = velocityY / velocityMag;
+            
+            if (this.debugMode) {
+                console.log(`Drilling direction based on velocity: ${directionX.toFixed(2)}, ${directionY.toFixed(2)}`);
+            }
+        } else if (block) {
+            // Fallback to collision direction if velocity is too low
+            // Calculate direction from block center to initial impact point
+            const dx = x - block.x;
+            const dy = y - block.y;
+            
+            // Normalize to get direction vector
+            const mag = Math.sqrt(dx * dx + dy * dy);
+            if (mag > 0) {
+                directionX = dx / mag;
+                directionY = dy / mag;
+                
+                if (this.debugMode) {
+                    console.log(`Fallback drilling direction from collision: ${directionX.toFixed(2)}, ${directionY.toFixed(2)}`);
+                }
+            }
+        }
+        
+        // Blocks to drill through (up to 10)
+        const maxDrillDistance = 10;
+        let currentDrillDistance = 0;
+        
+        // Track current drill position
+        let currentX = x;
+        let currentY = y;
+        
+        // Store blocks that have been drilled through
+        const drilledBlocks = [];
+        
+        // Keep track of the drill interval to ensure it can be cleared
+        let drillInterval = null;
+        
+        // Drilling animation
+        drillInterval = this.time.addEvent({
+            delay: 200, // Drill through a block every 200ms
+            callback: () => {
+                // Update position based on direction
+                currentX += directionX * 20; // Move 20px in drill direction
+                currentY += directionY * 20; 
+                
+                // Move the visual effect and particles
+                if (drillerEffect && drillerEffect.scene) {
+                    drillerEffect.setPosition(currentX, currentY);
+                }
+                
+                if (emitter && emitter.manager && emitter.manager.scene) {
+                    emitter.setPosition(currentX, currentY);
+                }
+                
+                // Update the bomb sprite position
+                if (bombSprite && bombSprite.scene) {
+                    bombSprite.setPosition(currentX, currentY);
+                }
+                
+                // Find any blocks at the current position
+                this.iceBlocks.forEach(block => {
+                    if (!block || !block.isActive) return;
+                    
+                    // Check distance to this block
+                    const distance = Phaser.Math.Distance.Between(currentX, currentY, block.x, block.y);
+                    
+                    // If we're close enough to a block, drill through it
+                    if (distance < 20 && !drilledBlocks.includes(block)) {
+                        // Add to drilled blocks
+                        drilledBlocks.push(block);
+                        
+                        // Create a drilling effect at this block
+                        this.createDrillEffect(block.x, block.y);
+                        
+                        // Destroy the block
+                        this.destroyIceBlock(block);
+                        
+                        // Increment drill distance
+                        currentDrillDistance++;
+                        
+                        // Stop if we've reached the max drill distance
+                        if (currentDrillDistance >= maxDrillDistance) {
+                            if (drillInterval) {
+                                drillInterval.remove();
+                                drillInterval = null;
+                            }
+                            drillingComplete();
+                        }
+                    }
+                });
+            },
+            callbackScope: this,
+            repeat: maxDrillDistance
+        });
+        
+        // Function to handle the end of drilling
+        const drillingComplete = () => {
+            if (this.debugMode) {
+                console.log(`Driller finished after drilling through ${currentDrillDistance} blocks`);
+            }
+            
+            // Stop the drilling animation if it's still active
+            if (drillInterval) {
+                drillInterval.remove();
+                drillInterval = null;
+            }
+            
+            // Create a sticky effect at the final position
+            const finalX = currentX;
+            const finalY = currentY;
+            
+            // Create a unique ID for this driller bomb for debugging purposes
+            const bombId = 'driller_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+            
+            // Create a driller bomb object similar to sticky bomb
+            const drillerBomb = {
+                id: bombId,
+                x: finalX,
+                y: finalY,
+                isActive: true,
+                visualEffect: drillerEffect,
+                particles: particles,
+                emitter: emitter,
+                bombSprite: bombSprite,
+                explosionRadius: 380, // Large explosion radius when triggered
+                isDriller: true, // Mark this as a driller bomb specifically
+                createdAt: Date.now()  // Add timestamp for debugging
+            };
+            
+            // Add to active sticky bombs array (reusing sticky bomb functionality)
+            if (!this.activeStickyBombs) {
+                this.activeStickyBombs = [];
+            }
+            
+            // Add the new driller bomb to the array
+            this.activeStickyBombs.push(drillerBomb);
+            
+            if (this.debugMode) {
+                console.log(`Added driller bomb ${bombId} to activeStickyBombs array. Total active bombs: ${this.activeStickyBombs.length}`);
+            }
+            
+            // Check if we need to reset the bomb after a delay to allow for the next shot
+            this.time.delayedCall(1000, () => {
+                if (this.shotsRemaining > 0 && !this.bomb) {
+                    if (this.debugMode) {
+                        console.log("Creating new bomb after placing driller bomb");
+                    }
+                    this.resetBomb();
+                } else {
+                    this.checkLevelCompletion();
+                }
+            });
+        };
+        
+        // Set a failsafe timer to ensure drilling completes even if normal process fails
+        this.time.delayedCall(maxDrillDistance * 300, () => {
+            if (drillInterval) {
+                if (this.debugMode) {
+                    console.log("Failsafe: Forcing drill completion");
+                }
+                drillInterval.remove();
+                drillInterval = null;
+                drillingComplete();
+            }
+        });
+        
+        // Play a drilling sound if available
+        try {
+            this.sound.play('explosion', { volume: 0.3, rate: 2.0 }); // Higher pitch for drilling sound
+        } catch (e) {
+            console.log("Sound not available:", e);
+        }
+    }
+
+    // Helper function to create a drill effect
+    createDrillEffect(x, y) {
+        // Create a drill dust effect
+        const particles = this.add.particles('particle');
+        particles.setDepth(6);
+        
+        // Create the emitter for debris
+        const emitter = particles.createEmitter({
+            speed: { min: 30, max: 80 },
+            scale: { start: 0.4, end: 0 },
+            alpha: { start: 0.8, end: 0 },
+            lifespan: 500,
+            blendMode: 'ADD',
+            tint: [0xBB5500, 0xCCCCCC], // Brown/orange and gray for drill dust
+        });
+        
+        // Emit a burst of particles
+        emitter.explode(10, x, y);
+        
+        // Clean up after use
+        this.time.delayedCall(500, () => {
+            particles.destroy();
+        });
+        
+        // Add a small camera shake for drilling feedback
+        this.cameras.main.shake(100, 0.003);
+    }
+
+    // New helper method specifically for driller explosions
+    createDrillerExplosion(x, y) {
+        // Create a larger explosion effect for driller bombs with distinct visuals
+        const explosion = this.add.circle(x, y, 140, 0xBB5500, 0.8);
+        explosion.setDepth(6);
+        
+        // Animate the explosion
+        this.tweens.add({
+            targets: explosion,
+            alpha: 0,
+            scale: 3.5, // Larger scale for more impressive explosion
+            duration: 600, // Longer duration
+            ease: 'Power2',
+            onComplete: () => {
+                explosion.destroy();
+            }
+        });
+        
+        // Add drilling debris particles
+        const particles = this.add.particles('particle');
+        particles.setDepth(6);
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 100, max: 300 }, // Faster particles
+            scale: { start: 1.8, end: 0 }, // Larger particles
+            alpha: { start: 1, end: 0 },
+            lifespan: 1200,
+            blendMode: 'ADD',
+            tint: [0xBB5500, 0xFF9900, 0xFFCC00] // Brown/orange/yellow for drill explosion
+        });
+        
+        // Emit more particles
+        emitter.explode(80, x, y);
+        
+        // Add a flash effect
+        const flash = this.add.circle(x, y, 180, 0xffffff, 1);
+        flash.setDepth(6);
+        this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            duration: 300,
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Add secondary ring blast
+        const ring = this.add.circle(x, y, 10, 0xFF9900, 0.7);
+        ring.setStrokeStyle(4, 0xBB5500, 1);
+        ring.setDepth(6);
+        this.tweens.add({
+            targets: ring,
+            scale: 30,
+            alpha: 0,
+            duration: 800,
+            onComplete: () => {
+                ring.destroy();
+            }
+        });
+        
+        // Clean up particles after use
+        this.time.delayedCall(1200, () => {
+            particles.destroy();
+        });
+        
+        // Add a stronger camera shake
+        this.cameras.main.shake(500, 0.02);
+        
+        // Add explosion sound with lower pitch for bigger boom
+        if (this.sound && this.sound.add) {
+            try {
+                const explosionSound = this.sound.add('explosion');
+                explosionSound.play({ volume: 0.7, rate: 0.5 });
+            } catch (e) {
+                console.log("Sound not available:", e);
+            }
+        }
+    }
+
+    // New helper method to cleanly handle bomb resource cleanup
+    cleanupBombResources(bomb) {
+        try {
+            // Clean up visual effects with error handling
+            if (bomb.visualEffect) {
+                if (bomb.visualEffect.scene) {
+                    bomb.visualEffect.destroy();
+                }
+                bomb.visualEffect = null;
+            }
+            
+            if (bomb.particles) {
+                if (bomb.particles.scene) {
+                    bomb.particles.destroy();
+                }
+                bomb.particles = null;
+            }
+            
+            // Destroy the bomb sprite if it exists
+            if (bomb.bombSprite) {
+                if (bomb.bombSprite.scene) {
+                    bomb.bombSprite.destroy();
+                }
+                bomb.bombSprite = null;
+            }
+            
+            // Clean up any tweens that might be running on bomb elements
+            if (bomb.visualEffect) this.tweens.killTweensOf(bomb.visualEffect);
+            if (bomb.bombSprite) this.tweens.killTweensOf(bomb.bombSprite);
+            
+            // If any emitters are stored directly on the bomb
+            if (bomb.emitter) {
+                if (bomb.emitter.manager && bomb.emitter.manager.scene) {
+                    bomb.emitter.stop();
+                    bomb.emitter.remove();
+                }
+                bomb.emitter = null;
+            }
+        } catch (error) {
+            console.error(`Error cleaning up bomb resources:`, error);
+        }
+    }
+
+    // Add a global failsafe mechanism to detect and fix stuck game states
+    setupGlobalFailsafe() {
+        // Clear any existing failsafe
+        if (this.globalFailsafeTimer) {
+            clearInterval(this.globalFailsafeTimer);
+        }
+        
+        // Create a periodic check that runs every 5 seconds
+        this.globalFailsafeTimer = setInterval(() => {
+            try {
+                this.checkGameState();
+            } catch (e) {
+                console.error("Error in global failsafe:", e);
+            }
+        }, 5000);
+    }
+    
+    // Check for stuck game states and auto-recover if needed
+    checkGameState() {
+        const currentTime = Date.now();
+        
+        // Case 1: Bomb has been active for too long without hitting anything
+        if (this.bomb && this.bomb.isLaunched && 
+            (currentTime - this.bombState.lastBombFired) > this.bombState.maxIdleTime) {
+                
+            if (this.debugMode) {
+                console.warn(`FAILSAFE: Bomb active for ${Math.floor((currentTime - this.bombState.lastBombFired)/1000)}s without action`);
+            }
+            
+            // Force cleanup and reset
+            this.forceResetGameState();
+            return;
+        }
+        
+        // Case 2: No active bomb for too long but game expects one
+        if (!this.bomb && !this.isLevelComplete && !this.isGameOver && 
+            this.shotsRemaining > 0 && 
+            (currentTime - this.bombState.lastResetTime) > 10000) {
+                
+            if (this.debugMode) {
+                console.warn("FAILSAFE: No active bomb for 10s when one should exist");
+            }
+            
+            // Force a bomb reset
+            this.forceResetGameState();
+            return;
+        }
+        
+        // Case 3: Pending reset that never executed
+        if (this.bombState.pendingReset && 
+            (currentTime - this.bombState.pendingReset) > 5000) {
+                
+            if (this.debugMode) {
+                console.warn("FAILSAFE: Pending reset never executed after 5s");
+            }
+            
+            // Force cleanup and reset
+            this.forceResetGameState();
+            return;
+        }
+    }
+    
+    // Force reset the game state to recover from stuck situations
+    forceResetGameState() {
+        // Cancel all timers
+        if (this.bombMissTimer) {
+            this.bombMissTimer.remove();
+            this.bombMissTimer = null;
+        }
+        
+        if (this.pendingReset) {
+            clearTimeout(this.pendingReset);
+            this.pendingReset = null;
+        }
+        
+        // Clear any stored timeouts in bombState
+        if (this.bombState.autoResetTimer) {
+            clearTimeout(this.bombState.autoResetTimer);
+            this.bombState.autoResetTimer = null;
+        }
+        
+        // Ensure no bomb is active
+        if (this.bomb) {
+            if (this.bomb.scene) {
+                this.bomb.destroy();
+            }
+            this.bomb = null;
+        }
+        
+        // Reset bomb state
+        this.bombState.active = false;
+        this.bombState.pendingReset = null;
+        
+        // Reset the game after a short delay
+        setTimeout(() => {
+            if (this.shotsRemaining > 0) {
+                // Only reset the bomb if we should still have shots
+                this.resetBomb();
+            } else {
+                // Otherwise check if the level is complete
+                this.checkLevelCompletion();
+            }
+        }, 500);
+    }
+
+    // When scene is shutting down, clean up all resources
+    shutdown() {
+        // Clear the failsafe timer to prevent memory leaks
+        if (this.globalFailsafeTimer) {
+            clearInterval(this.globalFailsafeTimer);
+            this.globalFailsafeTimer = null;
+        }
+        
+        // Clean up any pending timeouts
+        if (this.pendingReset) {
+            clearTimeout(this.pendingReset);
+            this.pendingReset = null;
+        }
+        
+        if (this.bombState.autoResetTimer) {
+            clearTimeout(this.bombState.autoResetTimer);
+            this.bombState.autoResetTimer = null;
+        }
+        
+        // Clean up any remaining bomb or resources
+        if (this.bomb && this.bomb.scene) {
+            this.bomb.destroy();
+            this.bomb = null;
+        }
+        
+        // Call original shutdown method
+        super.shutdown();
+    }
+
+    // New method to handle damaging multi-hit blocks
+    damageIceBlock(block) {
+        if (!block || !block.isActive) return;
+        
+        // Reduce hits left
+        block.hitsLeft--;
+        
+        // Create a damage effect
+        this.createDamageEffect(block);
+        
+        // If block has no hits left, destroy it
+        if (block.hitsLeft <= 0) {
+            this.destroyIceBlock(block);
+        } else {
+            // Otherwise update the appearance to show damage
+            // For Eternal Ice Blocks
+            if (block.blockType === 'eternal') {
+                const newAlpha = 0.75 + (block.hitsLeft * 0.05);
+                if (block.blueVeil) {
+                    this.tweens.add({
+                        targets: block.blueVeil,
+                        alpha: newAlpha,
+                        duration: 200,
+                        yoyo: true,
+                        ease: 'Sine.easeInOut'
+                    });
+                }
+            } 
+            // For Strong Ice Blocks
+            else if (block.blockType === 'strong') {
+                const crackIntensity = 0.7 + ((2 - block.hitsLeft) * 0.15);
+                if (block.blueVeil) {
+                    this.tweens.add({
+                        targets: block.blueVeil,
+                        alpha: crackIntensity,
+                        duration: 200,
+                        yoyo: true,
+                        ease: 'Sine.easeInOut'
+                    });
+                }
+            }
+        }
+    }
+    
+    // New method to create damage effect for multi-hit blocks
+    createDamageEffect(block) {
+        // Create small particles to indicate damage
+        const particles = this.add.particles('particle');
+        particles.setDepth(6);
+        
+        let tint = 0xffffff; // Default
+        
+        // Set tint based on block type
+        if (block.blockType === 'eternal') {
+            tint = 0x3333cc; // Dark blue
+        } else if (block.blockType === 'strong') {
+            tint = 0x6666dd; // Medium blue
+        }
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 30, max: 80 },
+            scale: { start: 0.5, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 400,
+            blendMode: 'ADD',
+            tint: tint
+        });
+        
+        // Emit particles from the center of the block
+        emitter.explode(10, block.x, block.y);
+        
+        // Clean up particles after use
+        this.time.delayedCall(500, () => {
+            particles.destroy();
+        });
+        
+        // Add a small camera shake for feedback
+        this.cameras.main.shake(100, 0.005);
+        
+        // Play a crack sound for feedback
+        if (this.sound && this.sound.add) {
+            try {
+                const crackSound = this.sound.add('cracksound', { volume: 0.3 });
+                crackSound.play();
+            } catch (e) {
+                console.log("Sound not available:", e);
+            }
+        }
+    }
+    
+    // New method to create effect when bouncy blocks are hit
+    createBouncyHitEffect(x, y) {
+        // Visual bounce effect
+        const ring = this.add.circle(x, y, 20, 0x88ddff, 0.8);
+        ring.setDepth(6);
+        
+        this.tweens.add({
+            targets: ring,
+            radius: 40,
+            alpha: 0,
+            duration: 300,
+            ease: 'Sine.easeOut',
+            onUpdate: (tween) => {
+                // Manually update the circle size since radius isn't a standard property
+                const radius = 20 + (40 - 20) * tween.progress;
+                ring.setRadius(radius);
+            },
+            onComplete: () => {
+                ring.destroy();
+            }
+        });
+        
+        // Play bounce sound
+        if (this.sound && this.sound.add) {
+            try {
+                const bounceSound = this.sound.add('bouncesound', { volume: 0.4 });
+                if (!bounceSound.isPlaying) {
+                    bounceSound.play();
+                }
+            } catch (e) {
+                console.log("Sound not available:", e);
+            }
+        }
+    }
+
+    // New method for dynamite block destruction effect
+    createDynamiteDestroyEffect(x, y) {
+        // Create special particles for dynamite
+        const particles = this.add.particles('particle');
+        particles.setDepth(6);
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 80, max: 200 },
+            scale: { start: 1.2, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: 600,
+            blendMode: 'ADD',
+            tint: [0xff0000, 0xff6600, 0xffcc00] // Red/orange/yellow
+        });
+        
+        // Emit more particles for dynamite
+        emitter.explode(40, x, y);
+        
+        // Add a flash effect
+        const flash = this.add.circle(x, y, 80, 0xffcc00, 0.8);
+        flash.setDepth(6);
+        this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            scale: 2,
+            duration: 200,
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Clean up particles after use
+        this.time.delayedCall(700, () => {
+            particles.destroy();
+        });
+    }
+
+    // New method to handle bouncy block reflections
+    handleBouncyBlock(block, bomb) {
+        if (!bomb || !block) return;
+        
+        // Create the bounce effect
+        this.createBouncyHitEffect(block.x, block.y);
+        
+        // Get incoming velocity
+        const vx = bomb.body.velocity.x;
+        const vy = bomb.body.velocity.y;
+        
+        // Calculate normal vector from block to bomb (for reflection)
+        const nx = bomb.x - block.x;
+        const ny = bomb.y - block.y;
+        
+        // Normalize the normal vector
+        const length = Math.sqrt(nx * nx + ny * ny);
+        const nnx = nx / length;
+        const nny = ny / length;
+        
+        // Calculate dot product of velocity and normal
+        const dot = vx * nnx + vy * nny;
+        
+        // Calculate reflection vector (v - 2 * dot * n)
+        const reflectVx = vx - 2 * dot * nnx;
+        const reflectVy = vy - 2 * dot * nny;
+        
+        // Add a bit of randomness to the reflection
+        const randomRange = 0.2; // 20% randomness
+        const randomFactor = 1 + (Math.random() * randomRange - randomRange/2);
+        
+        // Apply reflection velocity with a boost
+        const boostFactor = 1.2; // 20% speed boost on reflection
+        bomb.setVelocity(
+            reflectVx * boostFactor * randomFactor, 
+            reflectVy * boostFactor * randomFactor
+        );
+        
+        // Add a rotation effect
+        bomb.setAngularVelocity((Math.random() - 0.5) * 0.2);
+        
+        // Add a trail effect to the bounced bomb
+        this.createBounceTrail(bomb);
+    }
+    
+    // New method to add a visual trail to bounced bombs
+    createBounceTrail(bomb) {
+        if (!bomb || !bomb.scene) return;
+        
+        // Create trail particles
+        const particles = this.add.particles('particle');
+        particles.setDepth(5);
+        
+        const emitter = particles.createEmitter({
+            lifespan: 300,
+            speed: { min: 5, max: 20 },
+            scale: { start: 0.4, end: 0 },
+            alpha: { start: 0.6, end: 0 },
+            blendMode: 'ADD',
+            tint: 0x88ddff, // Light blue for bounce trail
+            frequency: 20, // Emit a particle every 20ms
+            emitZone: {
+                type: 'edge',
+                source: new Phaser.Geom.Circle(0, 0, 5),
+                quantity: 1
+            }
+        });
+        
+        // Track the bomb to emit particles
+        emitter.startFollow(bomb);
+        
+        // Clean up particles if bomb is destroyed
+        this.time.delayedCall(1200, () => {
+            if (particles && particles.scene) {
+                particles.destroy();
+            }
+        });
+        
+        // Remove the trail after a short time (if bomb hasn't exploded yet)
+        this.time.delayedCall(800, () => {
+            if (emitter && emitter.manager && emitter.manager.scene) {
+                emitter.stopFollow();
+                emitter.stop();
+            }
+        });
+    }
+
+    // New method to create bouncy blocks around the level boundaries
+    createBoundaryBouncyBlocks() {
+        console.log("Creating bouncy block boundaries");
+        const blockSize = 30; // Larger size for boundary blocks
+        const spacing = blockSize; // Place blocks with no gaps
+        
+        // Add boundary blocks to iceBlocks array if not already created
+        if (!this.boundaryBlocks) {
+            this.boundaryBlocks = [];
+        }
+        
+        // Define the physics properties for bouncy blocks
+        const bouncyPhysicsProps = {
+            isStatic: true,
+            friction: 0.01,
+            restitution: 1.0 // High restitution for maximum bounce
+        };
+        
+        // Top boundary (full width)
+        for (let x = 0; x < this.cameras.main.width; x += spacing) {
+            this.createBoundaryBlock(x + blockSize/2, blockSize/2, blockSize, bouncyPhysicsProps);
+        }
+        
+        // Bottom boundary (full width)
+        for (let x = 0; x < this.cameras.main.width; x += spacing) {
+            this.createBoundaryBlock(x + blockSize/2, this.cameras.main.height - blockSize/2, blockSize, bouncyPhysicsProps);
+        }
+        
+        // Right boundary (full height, excluding corners which were added with top/bottom)
+        for (let y = blockSize; y < this.cameras.main.height - blockSize; y += spacing) {
+            this.createBoundaryBlock(this.cameras.main.width - blockSize/2, y + blockSize/2, blockSize, bouncyPhysicsProps);
+        }
+        
+        console.log(`Created ${this.boundaryBlocks.length} bouncy blocks for level boundaries`);
+    }
+    
+    // Helper method to create a single boundary block
+    createBoundaryBlock(x, y, blockSize, physicsProps) {
+        // Create the block
+        const block = this.matter.add.image(x, y, 'iceBlock', null, physicsProps);
+        
+        // Scale the block to the desired size
+        block.setScale(blockSize / 40); // Original ice block is 40x40
+        
+        // Set block properties
+        block.setDepth(4); // Same depth as other blocks
+        block.setAlpha(0.5);
+        block.isActive = true;
+        block.blockType = 'bouncy';
+        block.hitsLeft = 1;
+        
+        // Create a green veil for the bouncy block
+        const blockVeil = this.add.rectangle(
+            x, 
+            y, 
+            blockSize, 
+            blockSize, 
+            0x00cc44, // Green color for bouncy blocks
+            0.9
+        );
+        
+        // Add a metallic look with highlights
+        blockVeil.setStrokeStyle(2, 0xffffff, 0.5);
+        blockVeil.setDepth(3);
+        
+        // Store reference to the veil in the block
+        block.blueVeil = blockVeil;
+        
+        // Add some shine effect to make it look metallic
+        this.createIceTextureEffect(blockVeil);
+        
+        // Add some pulsating effect to indicate it's a bouncy block
+        this.tweens.add({
+            targets: blockVeil,
+            alpha: { from: 0.9, to: 0.6 },
+            yoyo: true,
+            repeat: -1,
+            duration: 1500,
+            ease: 'Sine.easeInOut'
+        });
+        
+        // Add the block to arrays for tracking
+        this.iceBlocks.push(block);
+        this.blueVeils.push(blockVeil);
+        this.boundaryBlocks.push(block);
+        
+        return block;
     }
 }

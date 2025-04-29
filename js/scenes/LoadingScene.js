@@ -7,6 +7,9 @@ class LoadingScene extends Phaser.Scene {
         // Add a simple dark background
         this.cameras.main.setBackgroundColor('#000000');
         
+        // Create the bomb textures programmatically first, before any loading occurs
+        this.createBombTextures();
+        
         // Loading UI with more detailed information
         const loadingText = this.add.text(
             1920/2,
@@ -64,42 +67,9 @@ class LoadingScene extends Phaser.Scene {
             loadingText.destroy();
             assetText.destroy();
             
-            // Create a custom background for level 1
-            this.createLevelBackground();
+            console.log("Asset loading complete");
             
-            // Now create or load the chibi image
-            this.createOrLoadChibiImage();
-            
-            // Show "Press any key to continue"
-            const continueText = this.add.text(
-                1920/2,
-                1080/2 + 100,
-                'Press any key to continue',
-                {
-                    font: '42px Arial', 
-                    fill: '#ffffff',
-                    stroke: '#000000',
-                    strokeThickness: 6
-                }
-            ).setOrigin(0.5);
-            
-            // Make the text pulse
-            this.tweens.add({
-                targets: continueText,
-                alpha: 0.5,
-                duration: 500,
-                yoyo: true,
-                repeat: -1
-            });
-            
-            // Listen for input to continue
-            this.input.keyboard.once('keydown', () => {
-                this.startGame();
-            });
-            
-            this.input.once('pointerdown', () => {
-                this.startGame();
-            });
+            // The create() method will now handle the rest
         });
         
         // Load the actual game assets
@@ -116,19 +86,14 @@ class LoadingScene extends Phaser.Scene {
                 
                 // Load game object images
                 this.load.image('slingshot', 'assets/images/slingshot.png');
-                this.load.image('bomb', 'assets/images/bomb.png');
                 this.load.image('iceBlock', 'assets/images/ice_block.png');
                 this.load.image('particle', 'assets/images/particle.png');
                 this.load.image('mini_particle', 'assets/images/mini_particle.png');
                 this.load.image('sticky_particle', 'assets/images/sticky_particle.png');
                 this.load.image('impact_particle', 'assets/images/impact_particle.png');
                 
-                // Load bomb types
-                this.load.image('blast_bomb', 'assets/images/blast_bomb.png');
-                this.load.image('piercer_bomb', 'assets/images/piercer_bomb.png');
-                this.load.image('cluster_bomb', 'assets/images/cluster_bomb.png');
-                this.load.image('sticky_bomb', 'assets/images/sticky_bomb.png');
-                this.load.image('shatterer_bomb', 'assets/images/shatterer_bomb.png');
+                // Generate bomb textures programmatically instead of loading images
+                this.createBombTextures();
                 
                 // Load audio files with simpler approach
                 try {
@@ -136,6 +101,9 @@ class LoadingScene extends Phaser.Scene {
                     this.load.audio('bgMusic', 'assets/audio/background_music.mp3');
                     this.load.audio('victoryMusic', 'assets/audio/victory_music.mp3'); // Use the actual victory music file
                     this.load.audio('gameOverSound', 'assets/audio/game_over.mp3'); // Game over sound
+                    this.load.audio('explosion', 'assets/audio/explosion.mp3'); // Explosion sound
+                    this.load.audio('cracksound', 'assets/audio/crack.mp3'); // Cracking sound for damaging blocks
+                    this.load.audio('bouncesound', 'assets/audio/bounce.mp3'); // Bounce sound for bouncy blocks
                 } catch (audioError) {
                     console.error("Error loading audio files:", audioError);
                 }
@@ -349,52 +317,6 @@ class LoadingScene extends Phaser.Scene {
             victoryBg.clear();
         }
         
-        // Create fallback bomb if needed
-        if (!this.textures.exists('bomb')) {
-            console.log("Creating fallback bomb texture");
-            const bombGraphics = this.add.graphics({ willReadFrequently: true });
-            bombGraphics.fillStyle(0x000000, 1);
-            bombGraphics.fillCircle(25, 25, 25);
-            bombGraphics.generateTexture('bomb', 50, 50);
-            bombGraphics.clear();
-            
-            // Use the same fallback for all bomb types
-            if (!this.textures.exists('blast_bomb')) {
-                bombGraphics.fillStyle(0xff5500, 1);
-                bombGraphics.fillCircle(25, 25, 25);
-                bombGraphics.generateTexture('blast_bomb', 50, 50);
-                bombGraphics.clear();
-            }
-            
-            if (!this.textures.exists('piercer_bomb')) {
-                bombGraphics.fillStyle(0x00aaff, 1);
-                bombGraphics.fillCircle(25, 25, 25);
-                bombGraphics.generateTexture('piercer_bomb', 50, 50);
-                bombGraphics.clear();
-            }
-            
-            if (!this.textures.exists('cluster_bomb')) {
-                bombGraphics.fillStyle(0xffcc00, 1);
-                bombGraphics.fillCircle(25, 25, 25);
-                bombGraphics.generateTexture('cluster_bomb', 50, 50);
-                bombGraphics.clear();
-            }
-            
-            if (!this.textures.exists('sticky_bomb')) {
-                bombGraphics.fillStyle(0xff00ff, 1);
-                bombGraphics.fillCircle(25, 25, 25);
-                bombGraphics.generateTexture('sticky_bomb', 50, 50);
-                bombGraphics.clear();
-            }
-            
-            if (!this.textures.exists('shatterer_bomb')) {
-                bombGraphics.fillStyle(0xff0000, 1);
-                bombGraphics.fillCircle(25, 25, 25);
-                bombGraphics.generateTexture('shatterer_bomb', 50, 50);
-                bombGraphics.clear();
-            }
-        }
-        
         // Create fallback slingshot if needed
         if (!this.textures.exists('slingshot')) {
             console.log("Creating fallback slingshot texture");
@@ -465,5 +387,186 @@ class LoadingScene extends Phaser.Scene {
         // No audio initialization here - will be done in GameScene
         this.scene.start('GameScene');
         this.scene.launch('UIScene');
+    }
+
+    // Add a new method to create bomb textures programmatically
+    createBombTextures() {
+        // Define colors for each bomb type
+        const bombColors = {
+            'blast_bomb': 0xff4444,     // Red for blast
+            'piercer_bomb': 0x44aaff,   // Blue for piercer
+            'cluster_bomb': 0xffaa44,   // Orange for cluster
+            'sticky_bomb': 0x44ff44,    // Green for sticky
+            'shatterer_bomb': 0xaa44ff,  // Purple for shatterer
+            'driller_bomb': 0xBB5500    // Brown for driller
+        };
+
+        // Remove existing textures if they exist
+        Object.keys(bombColors).forEach(bombType => {
+            if (this.textures.exists(bombType)) {
+                this.textures.remove(bombType);
+                console.log(`Removed existing texture for ${bombType}`);
+            }
+        });
+        
+        // Create a default bomb texture (used for initial loading)
+        if (this.textures.exists('bomb')) {
+            this.textures.remove('bomb');
+        }
+        const defaultBomb = this.add.graphics();
+        defaultBomb.fillStyle(0xffcc00, 1);
+        defaultBomb.lineStyle(4, 0x000000, 1);
+        defaultBomb.fillCircle(30, 30, 25);
+        defaultBomb.strokeCircle(30, 30, 25);
+        defaultBomb.generateTexture('bomb', 60, 60);
+        defaultBomb.clear();
+        defaultBomb.destroy();
+        console.log('Created default bomb texture');
+
+        // Create each bomb texture
+        Object.entries(bombColors).forEach(([bombType, color]) => {
+            // Create a temporary graphics object
+            const graphics = this.add.graphics();
+            
+            // Draw the bomb (circle with face)
+            graphics.fillStyle(color, 1);
+            graphics.lineStyle(2, 0x000000, 1);
+            
+            // Draw main circle
+            graphics.fillCircle(30, 30, 25);
+            graphics.strokeCircle(30, 30, 25);
+            
+            // Add a smiley face
+            // Eyes
+            graphics.fillStyle(0xffffff, 1);
+            graphics.fillCircle(22, 22, 6);
+            graphics.fillCircle(38, 22, 6);
+            
+            graphics.fillStyle(0x000000, 1);
+            graphics.fillCircle(22, 22, 3);
+            graphics.fillCircle(38, 22, 3);
+            
+            // Mouth
+            graphics.lineStyle(2, 0x000000, 1);
+            graphics.beginPath();
+            graphics.arc(30, 34, 12, 0, Math.PI, false);
+            graphics.strokePath();
+            
+            // Add specific features based on bomb type
+            switch(bombType) {
+                case 'blast_bomb':
+                    // Add explosion-like spikes
+                    graphics.lineStyle(2, 0xff0000, 1);
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2;
+                        const x1 = 30 + Math.cos(angle) * 25;
+                        const y1 = 30 + Math.sin(angle) * 25;
+                        const x2 = 30 + Math.cos(angle) * 32;
+                        const y2 = 30 + Math.sin(angle) * 32;
+                        graphics.lineBetween(x1, y1, x2, y2);
+                    }
+                    break;
+                
+                case 'piercer_bomb':
+                    // Add arrow-like shape
+                    graphics.fillStyle(0x0000ff, 1);
+                    graphics.fillTriangle(55, 30, 45, 22, 45, 38);
+                    break;
+                
+                case 'cluster_bomb':
+                    // Add smaller circles around
+                    graphics.fillStyle(0xff8800, 1);
+                    graphics.fillCircle(12, 12, 7);
+                    graphics.fillCircle(48, 12, 7);
+                    graphics.fillCircle(12, 48, 7);
+                    graphics.fillCircle(48, 48, 7);
+                    break;
+                
+                case 'sticky_bomb':
+                    // Add sticky drips
+                    graphics.fillStyle(0x00dd00, 1);
+                    graphics.fillCircle(30, 58, 7);
+                    graphics.fillCircle(15, 48, 5);
+                    graphics.fillCircle(45, 48, 5);
+                    break;
+                
+                case 'shatterer_bomb':
+                    // Add crack pattern
+                    graphics.lineStyle(2, 0x000000, 1);
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i / 6) * Math.PI * 2;
+                        const x1 = 30 + Math.cos(angle) * 8;
+                        const y1 = 30 + Math.sin(angle) * 8;
+                        const x2 = 30 + Math.cos(angle) * 22;
+                        const y2 = 30 + Math.sin(angle) * 22;
+                        graphics.lineBetween(x1, y1, x2, y2);
+                    }
+                    break;
+                
+                case 'driller_bomb':
+                    // Add drill-like pattern
+                    graphics.lineStyle(2, 0x663300, 1);
+                    graphics.beginPath();
+                    graphics.moveTo(30, 12);
+                    graphics.lineTo(48, 30);
+                    graphics.lineTo(30, 48);
+                    graphics.lineTo(12, 30);
+                    graphics.lineTo(30, 12);
+                    graphics.strokePath();
+                    break;
+            }
+            
+            // Generate the texture with smaller size
+            graphics.generateTexture(bombType, 60, 60);
+            graphics.clear();
+            graphics.destroy();
+            
+            console.log(`Created texture for ${bombType}`);
+        });
+        
+        console.log('Created all bomb textures');
+    }
+
+    // Add a create method to ensure the textures are created at scene creation
+    create() {
+        // Recreate the bomb textures to ensure they exist
+        this.createBombTextures();
+        
+        // Create a custom background for level 1
+        this.createLevelBackground();
+        
+        // Now create or load the chibi image
+        this.createOrLoadChibiImage();
+        
+        // Show "Press any key to continue"
+        const continueText = this.add.text(
+            1920/2,
+            1080/2 + 100,
+            'Press any key to continue',
+            {
+                font: '42px Arial', 
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 6
+            }
+        ).setOrigin(0.5);
+        
+        // Make the text pulse
+        this.tweens.add({
+            targets: continueText,
+            alpha: 0.5,
+            duration: 500,
+            yoyo: true,
+            repeat: -1
+        });
+        
+        // Listen for input to continue
+        this.input.keyboard.once('keydown', () => {
+            this.startGame();
+        });
+        
+        this.input.once('pointerdown', () => {
+            this.startGame();
+        });
     }
 } 

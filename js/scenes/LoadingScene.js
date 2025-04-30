@@ -398,7 +398,8 @@ class LoadingScene extends Phaser.Scene {
             'cluster_bomb': 0xffaa44,   // Orange for cluster
             'sticky_bomb': 0x44ff44,    // Green for sticky
             'shatterer_bomb': 0xaa44ff,  // Purple for shatterer
-            'driller_bomb': 0xBB5500    // Brown for driller
+            'driller_bomb': 0xBB5500,    // Brown for driller
+            'ricochet_bomb': 0x00ccaa   // Teal/Turquoise for Ricochet
         };
 
         // Remove existing textures if they exist
@@ -512,6 +513,17 @@ class LoadingScene extends Phaser.Scene {
                     graphics.lineTo(30, 48);
                     graphics.lineTo(12, 30);
                     graphics.lineTo(30, 12);
+                    graphics.strokePath();
+                    break;
+                
+                case 'ricochet_bomb':
+                    // Add swirl/bounce lines
+                    graphics.lineStyle(2, 0xffffff, 0.8); // White lines
+                    graphics.beginPath();
+                    graphics.arc(30, 30, 18, Math.PI * 0.2, Math.PI * 0.8, false);
+                    graphics.strokePath();
+                    graphics.beginPath();
+                    graphics.arc(30, 30, 18, Math.PI * 1.2, Math.PI * 1.8, false);
                     graphics.strokePath();
                     break;
             }

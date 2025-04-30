@@ -1,0 +1,24 @@
+{
+  "levelNumber": 3,
+  "chibiGirl": "Witch",
+  "bombType": "cluster_bomb",
+  "totalBlocks": 80,
+  "blockConfiguration": {
+    "standard": 50,
+    "strong": 20,
+    "dynamite": 10,
+    "eternal": 0,
+    "bouncy": 0
+  },
+  "bombAvailability": {
+    "blast_bomb": 2,
+    "piercer_bomb": 2,
+    "cluster_bomb": 2,
+    "sticky_bomb": 0,
+    "shatterer_bomb": 0,
+    "driller_bomb": 0,
+    "ricochet_bomb": 3
+  },
+  "layout": "8x10 grid; Dynamite in rows (y: 200, 400), Strong in columns (x: 300, 500)",
+  "strategy": "Use Ricochet for angled shots. Shrapnel for spread damage. Achieve ≥30% reveal for voice clips."
+} 

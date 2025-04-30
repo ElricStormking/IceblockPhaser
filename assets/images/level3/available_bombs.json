@@ -1,0 +1,15 @@
+{
+  "availableBombs": [
+    "blast_bomb",
+    "piercer_bomb",
+    "cluster_bomb",
+    "ricochet_bomb"
+  ],
+  "bombCounts": {
+    "blast_bomb": 2,
+    "piercer_bomb": 2,
+    "cluster_bomb": 2,
+    "ricochet_bomb": 3
+  },
+  "unlockedBomb": "cluster_bomb"
+} 

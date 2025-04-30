@@ -1,0 +1,24 @@
+{
+  "levelNumber": 1,
+  "chibiGirl": "Schoolgirl",
+  "bombType": "blast_bomb",
+  "totalBlocks": 50,
+  "blockConfiguration": {
+    "standard": 50,
+    "strong": 0,
+    "dynamite": 0,
+    "eternal": 0,
+    "bouncy": 0
+  },
+  "bombAvailability": {
+    "blast_bomb": 5,
+    "piercer_bomb": 3,
+    "cluster_bomb": 0,
+    "sticky_bomb": 0,
+    "shatterer_bomb": 0,
+    "driller_bomb": 0,
+    "ricochet_bomb": 0
+  },
+  "layout": "5x10 grid centered (x: 200-600, y: 100-500)",
+  "strategy": "Use Blast for clusters (3-4 blocks/shot). Piercer for stragglers. Aim for ≥30% reveal per Blast shot to trigger voice messages."
+} 

@@ -1,0 +1,19 @@
+{
+  "availableBombs": [
+    "blast_bomb",
+    "piercer_bomb",
+    "cluster_bomb",
+    "sticky_bomb",
+    "shatterer_bomb",
+    "ricochet_bomb"
+  ],
+  "bombCounts": {
+    "blast_bomb": 2,
+    "piercer_bomb": 2,
+    "cluster_bomb": 2,
+    "sticky_bomb": 1,
+    "shatterer_bomb": 2,
+    "ricochet_bomb": 2
+  },
+  "unlockedBomb": "ricochet_bomb"
+} 

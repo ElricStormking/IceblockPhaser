@@ -1,0 +1,24 @@
+{
+  "levelNumber": 4,
+  "chibiGirl": "Mermaid",
+  "bombType": "ricochet_bomb",
+  "totalBlocks": 90,
+  "blockConfiguration": {
+    "standard": 45,
+    "strong": 25,
+    "dynamite": 15,
+    "eternal": 5,
+    "bouncy": 0
+  },
+  "bombAvailability": {
+    "blast_bomb": 2,
+    "piercer_bomb": 2,
+    "cluster_bomb": 2,
+    "sticky_bomb": 1,
+    "shatterer_bomb": 2,
+    "driller_bomb": 0,
+    "ricochet_bomb": 2
+  },
+  "layout": "9x10 grid; Eternal in cross (x: 400, y: 300), Dynamite scattered, Strong at edges",
+  "strategy": "Shatterer for Eternal cross. Sticky on Dynamite. Ricochet for tight spaces. Trigger voice clips with Ricochet chains."
+} 

@@ -1,0 +1,11 @@
+{
+  "availableBombs": [
+    "blast_bomb",
+    "piercer_bomb"
+  ],
+  "bombCounts": {
+    "blast_bomb": 5,
+    "piercer_bomb": 3
+  },
+  "unlockedBomb": "blast_bomb"
+} 

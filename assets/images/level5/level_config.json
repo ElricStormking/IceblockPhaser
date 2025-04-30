@@ -1,0 +1,24 @@
+{
+  "levelNumber": 5,
+  "chibiGirl": "Pirate",
+  "bombType": "sticky_bomb",
+  "totalBlocks": 110,
+  "blockConfiguration": {
+    "standard": 50,
+    "strong": 35,
+    "dynamite": 15,
+    "eternal": 10,
+    "bouncy": 0
+  },
+  "bombAvailability": {
+    "blast_bomb": 2,
+    "piercer_bomb": 1,
+    "cluster_bomb": 1,
+    "sticky_bomb": 1,
+    "shatterer_bomb": 2,
+    "driller_bomb": 0,
+    "ricochet_bomb": 2
+  },
+  "layout": "11x10 grid; Eternal/Strong in checkerboard (x: 300-500, y: 200-400), Dynamite at corners",
+  "strategy": "Cluster for Dynamite triggers. Shatterer/Melter for Eternal. Ricochet for precise angles. Use Sticky for voice clips."
+} 

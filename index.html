@@ -6,6 +6,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- Empty favicon to prevent browser from requesting favicon.ico -->
+    <link rel="icon" href="data:,">
+    <!-- Force file:// protocol for local resources -->
+    <base href="./">
     <title>Beauty Ice Breaker</title>
     <style>
         html {
@@ -86,14 +90,25 @@
     
     <div id="game-container"></div>
     
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
-    <script src="js/scenes/BootScene.js"></script>
-    <script src="js/scenes/MainMenuScene.js"></script>
-    <script src="js/scenes/LoadingScene.js"></script>
-    <script src="js/UI.js"></script>
-    <script src="js/scenes/GameScene.js"></script>
-    <script src="js/scenes/UIScene.js"></script>
-    <script src="js/game.js"></script>
+    <!-- Use local path for Phaser -->
+    <script src="./js/lib/phaser.min.js"></script>
+    <script src="./js/scenes/BootScene.js"></script>
+    <script src="./js/scenes/MainMenuScene.js"></script>
+    <script src="./js/scenes/LoadingScene.js"></script>
+    <script src="./js/UI.js"></script>
+    <!-- Load modular files -->
+    <script src="./js/BombTypes.js"></script>
+    <script src="./js/VisualEffects.js"></script>
+    <script src="./js/BlockManager.js"></script>
+    <script src="./js/BlockTypes.js"></script>
+    <script src="./js/BlockUtils.js"></script>
+    <script src="./js/BombUtils.js"></script>
+    <script src="./js/InputHandler.js"></script>
+    <script src="./js/AudioManager.js"></script>
+    <script src="./js/LevelManager.js"></script>
+    <script src="./js/scenes/GameScene.js"></script>
+    <script src="./js/scenes/UIScene.js"></script>
+    <script src="./js/game.js"></script>
     <script>
         // Remove loading screen when game is ready
         window.addEventListener('load', function() {

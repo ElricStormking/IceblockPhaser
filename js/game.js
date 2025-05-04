@@ -47,6 +47,21 @@ const config = {
             preventDefaultMove: true // Prevent default move behavior for drag actions
         }
     },
+    loader: {
+        baseURL: '',  // Empty string for base URL to ensure local paths
+        path: './',   // Use relative path starting with ./ to ensure local access
+        crossOrigin: false, // Disable CORS for local file loading
+        maxParallelDownloads: 32, // Allow more parallel downloads for speed
+        xhr: {
+            // Prevent automatic URL prefixing by Phaser
+            responseType: '',
+            async: true,
+            // Set withCredentials to false for local files
+            withCredentials: false,
+            // Don't let the XHR request append any server URL
+            overrideMimeType: false
+        }
+    },
     render: {
         antialias: true,
         pixelArt: false,

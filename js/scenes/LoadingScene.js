@@ -1,6 +1,13 @@
 class LoadingScene extends Phaser.Scene {
     constructor() {
         super({ key: 'LoadingScene' });
+        this.levelNumber = 1; // Default to level 1
+    }
+    
+    init(data) {
+        // Get level number from scene data
+        this.levelNumber = data.levelNumber || 1;
+        console.log(`LoadingScene: Initializing for level ${this.levelNumber}`);
     }
 
     preload() {
@@ -9,6 +16,19 @@ class LoadingScene extends Phaser.Scene {
         
         // Create the bomb textures programmatically first, before any loading occurs
         this.createBombTextures();
+        
+        // Display level information
+        const levelInfoText = this.add.text(
+            1920/2,
+            100,
+            `Loading Level ${this.levelNumber}`,
+            {
+                font: '48px Arial',
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 6
+            }
+        ).setOrigin(0.5);
         
         // Loading UI with more detailed information
         const loadingText = this.add.text(
@@ -74,50 +94,138 @@ class LoadingScene extends Phaser.Scene {
         
         // Load the actual game assets
         try {
-            console.log("LoadingScene: Loading game assets");
+            console.log(`LoadingScene: Loading game assets for level ${this.levelNumber}`);
             
-            // Load both images needed for the game scene here
+            // Simplified loading approach:
+            // Level 1 uses: background1, chibi_girl1 from level1 folder
+            // Level 2-5 use: background2, chibi_girl2, etc. from level2-5 folders
+            
+            // Always load the default background and victory background as fallbacks
+            this.load.image('background', 'assets/images/background.png');
+            this.load.image('victoryBackground', 'assets/images/victory_background.png');
+            
+            // Load level-specific background
+            const bgPath = `assets/images/level${this.levelNumber}/background${this.levelNumber}.png`;
+            const bgKey = `background${this.levelNumber}`;
+            console.log(`Loading level background: ${bgKey} from ${bgPath}`);
+            this.load.image(bgKey, bgPath);
+            
+            // Load level-specific victory background 
+            const victoryBgPath = `assets/images/level${this.levelNumber}/victory_background${this.levelNumber}.png`;
+            const victoryBgKey = `victoryBackground${this.levelNumber}`;
+            console.log(`Loading victory background: ${victoryBgKey} from ${victoryBgPath}`);
+            this.load.image(victoryBgKey, victoryBgPath);
+            
+            // Load level-specific chibi image
+            const chibiPath = `assets/images/level${this.levelNumber}/chibi_girl${this.levelNumber}.png`;
+            const chibiKey = `chibi_girl${this.levelNumber}`;
+            console.log(`Loading chibi image: ${chibiKey} from ${chibiPath}`);
+            this.load.image(chibiKey, chibiPath);
+            
+            // Load level configuration
+            this.load.json('levelConfig', `assets/images/level${this.levelNumber}/level_config.json`);
+            this.load.json('availableBombs', `assets/images/level${this.levelNumber}/available_bombs.json`);
+            
+            // Load game object images
+            this.load.image('slingshot', 'assets/images/slingshot.png');
+            this.load.image('iceBlock', 'assets/images/ice_block.png');
+            this.load.image('particle', 'assets/images/particle.png');
+            this.load.image('mini_particle', 'assets/images/mini_particle.png');
+            this.load.image('sticky_particle', 'assets/images/sticky_particle.png');
+            this.load.image('impact_particle', 'assets/images/impact_particle.png');
+            
+            // Generate bomb textures programmatically instead of loading images
+            this.createBombTextures();
+            
+            // Load audio files with simpler approach
             try {
-                this.load.image('levelBackground', 'assets/images/background.png');
-                this.load.image('chibi', 'assets/images/chibi_girl.png');
+                console.log("Loading audio files...");
                 
-                // Load victory background image
-                this.load.image('victoryBackground', 'assets/images/victory_background.png');
+                // Define all audio files to load
+                const audioFiles = [
+                    { key: 'bgMusic', path: 'assets/audio/background_music.mp3' },
+                    { key: 'victoryMusic', path: 'assets/audio/victory_music.mp3' },
+                    { key: 'gameOverSound', path: 'assets/audio/game_over.mp3' },
+                    { key: 'explosion', path: 'assets/audio/explosion.mp3' },
+                    { key: 'cracksound', path: 'assets/audio/crack.mp3' },
+                    { key: 'bouncesound', path: 'assets/audio/bounce.mp3' }
+                ];
                 
-                // Load game object images
-                this.load.image('slingshot', 'assets/images/slingshot.png');
-                this.load.image('iceBlock', 'assets/images/ice_block.png');
-                this.load.image('particle', 'assets/images/particle.png');
-                this.load.image('mini_particle', 'assets/images/mini_particle.png');
-                this.load.image('sticky_particle', 'assets/images/sticky_particle.png');
-                this.load.image('impact_particle', 'assets/images/impact_particle.png');
-                
-                // Generate bomb textures programmatically instead of loading images
-                this.createBombTextures();
-                
-                // Load audio files with simpler approach
-                try {
-                    console.log("Loading audio files...");
-                    this.load.audio('bgMusic', 'assets/audio/background_music.mp3');
-                    this.load.audio('victoryMusic', 'assets/audio/victory_music.mp3'); // Use the actual victory music file
-                    this.load.audio('gameOverSound', 'assets/audio/game_over.mp3'); // Game over sound
-                    this.load.audio('explosion', 'assets/audio/explosion.mp3'); // Explosion sound
-                    this.load.audio('cracksound', 'assets/audio/crack.mp3'); // Cracking sound for damaging blocks
-                    this.load.audio('bouncesound', 'assets/audio/bounce.mp3'); // Bounce sound for bouncy blocks
-                } catch (audioError) {
-                    console.error("Error loading audio files:", audioError);
+                // Add level-specific music based on level number
+                if (this.levelNumber > 1) {
+                    // For level 2 and above, use level-specific music if available
+                    const levelMusicPath = `assets/audio/background_music${this.levelNumber}.mp3`;
+                    audioFiles.push({
+                        key: `bgMusic_level${this.levelNumber}`,
+                        path: levelMusicPath,
+                        optional: true // Mark as optional so errors won't stop the game
+                    });
+                    
+                    console.log(`Added level-specific music for level ${this.levelNumber}: ${levelMusicPath}`);
                 }
                 
-                // Add error handler for asset loading
-                this.load.on('loaderror', (fileObj) => {
-                    console.error("Error loading file:", fileObj.key);
-                    if (fileObj.key === 'levelBackground' || fileObj.key === 'chibi') {
-                        console.log(`${fileObj.key} failed to load, will use fallback`);
+                // Add individual error handlers for each audio file
+                audioFiles.forEach(file => {
+                    // Check if audio is already loaded to avoid duplicate loading
+                    if (this.cache.audio.exists(file.key)) {
+                        console.log(`Audio ${file.key} already exists in cache, will be replaced.`);
+                        try {
+                            // Attempt to remove the audio from cache to prevent issues
+                            this.cache.audio.remove(file.key);
+                            console.log(`Removed ${file.key} from audio cache for clean reload`);
+                        } catch (err) {
+                            console.warn(`Could not remove ${file.key} from cache:`, err);
+                        }
                     }
+                    
+                    // Create a load handler to track specific file loading
+                    this.load.once(`filecomplete-audio-${file.key}`, () => {
+                        console.log(`Successfully loaded audio: ${file.key}`);
+                    });
+                    
+                    // Create an error handler for this specific file
+                    if (file.optional) {
+                        this.load.once(`loaderror`, (fileObj) => {
+                            if (fileObj.key === file.key) {
+                                console.warn(`Optional audio file ${file.key} failed to load - this is OK for optional files`);
+                            }
+                        });
+                    }
+                    
+                    // Load the file
+                    this.load.audio(file.key, file.path);
                 });
-            } catch (error) {
-                console.error("Error setting up image loading:", error);
+                
+            } catch (audioError) {
+                console.error("Error setting up audio files:", audioError);
+                // Create dummy sounds for essential audio
+                this.createDummyAudios();
             }
+            
+            // Add comprehensive error handler for all asset loading
+            this.load.on('loaderror', (fileObj) => {
+                console.error("Error loading file:", fileObj.key, "from path:", fileObj.url);
+                
+                // Special handling for audio files
+                if (fileObj.type === 'audio') {
+                    console.error(`Audio file failed to load: ${fileObj.key}`);
+                    // Create a silent dummy sound to prevent errors
+                    this.createDummyAudio(fileObj.key);
+                }
+                
+                // Check if the file exists using fetch
+                fetch(fileObj.url)
+                    .then(response => {
+                        console.log(`File ${fileObj.url} check: ${response.status} ${response.statusText}`);
+                    })
+                    .catch(error => {
+                        console.error(`Fetch failed for ${fileObj.url}:`, error);
+                    });
+                
+                if (fileObj.key === bgKey || fileObj.key === chibiKey) {
+                    console.log(`${fileObj.key} failed to load, will use fallback`);
+                }
+            });
         } catch (error) {
             console.error("Error during loading:", error);
             assetText.setText('Error loading assets. Click to retry.');
@@ -180,7 +288,7 @@ class LoadingScene extends Phaser.Scene {
     
     createOrLoadChibiImage() {
         // Only create a fallback chibi if loading the image failed
-        if (!this.textures.exists('chibi')) {
+        if (!this.textures.exists('chibi_girl1')) {
             console.log("Creating fallback chibi image");
             
             // Create a fallback chibi image
@@ -233,8 +341,7 @@ class LoadingScene extends Phaser.Scene {
             // Right arm
             chibi.fillRect(centerX + 240, centerY + 100, 80, 300);
             
-            // Generate texture
-            chibi.generateTexture('chibi', 800, 1080);
+            chibi.generateTexture('chibi_girl1', 800, 1080);
             chibi.clear();
             
             console.log("Created fallback chibi image");
@@ -382,11 +489,59 @@ class LoadingScene extends Phaser.Scene {
     }
     
     startGame() {
-        console.log("LoadingScene: Starting game");
+        console.log(`LoadingScene: Starting game for level ${this.levelNumber}`);
         
-        // No audio initialization here - will be done in GameScene
-        this.scene.start('GameScene');
-        this.scene.launch('UIScene');
+        // Ensure that all audio is fully loaded before starting
+        let audioLoaded = true;
+        const requiredAudio = ['bgMusic', 'victoryMusic', 'gameOverSound'];
+        
+        // Add level-specific music to the required list if we're above level 1
+        if (this.levelNumber > 1) {
+            requiredAudio.push(`bgMusic_level${this.levelNumber}`);
+        }
+        
+        // Log all available audio keys
+        console.log("Available audio keys:", this.cache.audio.getKeys().join(", "));
+        
+        // Verify critical audio files are loaded
+        requiredAudio.forEach(key => {
+            if (!this.cache.audio.exists(key)) {
+                if (key.startsWith('bgMusic_level') && key !== 'bgMusic') {
+                    // It's okay if level-specific music is missing, we'll use the default
+                    console.log(`Level-specific music ${key} not found, will use default music`);
+                } else {
+                    console.warn(`Critical audio file ${key} is not loaded - creating dummy sound`);
+                    this.createDummyAudio(key);
+                    audioLoaded = false;
+                }
+            } else {
+                console.log(`Audio ${key} verified loaded`);
+            }
+        });
+        
+        if (!audioLoaded) {
+            console.warn("Some audio files are not properly loaded, game will use fallbacks");
+        } else {
+            console.log("All critical audio files loaded successfully");
+        }
+        
+        // Clean up any existing scenes - make sure to stop the GameScene if it's already running
+        if (this.scene.isActive('GameScene')) {
+            console.log("Stopping existing GameScene before starting new one");
+            this.scene.stop('GameScene');
+        }
+        
+        if (this.scene.isActive('UIScene')) {
+            console.log("Stopping existing UIScene before starting new one");
+            this.scene.stop('UIScene');
+        }
+        
+        // Add a small delay before starting the next scene to allow cleanup
+        this.time.delayedCall(100, () => {
+            // Pass the level number to the GameScene
+            this.scene.start('GameScene', { levelNumber: this.levelNumber });
+            this.scene.launch('UIScene');
+        });
     }
 
     // Add a new method to create bomb textures programmatically
@@ -399,7 +554,7 @@ class LoadingScene extends Phaser.Scene {
             'sticky_bomb': 0x44ff44,    // Green for sticky
             'shatterer_bomb': 0xaa44ff,  // Purple for shatterer
             'driller_bomb': 0xBB5500,    // Brown for driller
-            'ricochet_bomb': 0x00ccaa   // Teal/Turquoise for Ricochet
+            'ricochet_bomb': 0x00FFFF     // Cyan for ricochet
         };
 
         // Remove existing textures if they exist
@@ -515,16 +670,28 @@ class LoadingScene extends Phaser.Scene {
                     graphics.lineTo(30, 12);
                     graphics.strokePath();
                     break;
-                
+                    
                 case 'ricochet_bomb':
-                    // Add swirl/bounce lines
-                    graphics.lineStyle(2, 0xffffff, 0.8); // White lines
+                    // Add ricochet pattern with bounce arrows
+                    graphics.lineStyle(2, 0x00FFFF, 1);
+                    // Draw bounce arrows in different directions
+                    // Right arrow
                     graphics.beginPath();
-                    graphics.arc(30, 30, 18, Math.PI * 0.2, Math.PI * 0.8, false);
-                    graphics.strokePath();
+                    graphics.moveTo(50, 30);
+                    graphics.lineTo(40, 25);
+                    graphics.lineTo(40, 35);
+                    graphics.lineTo(50, 30);
+                    graphics.fillPath();
+                    // Left arrow
                     graphics.beginPath();
-                    graphics.arc(30, 30, 18, Math.PI * 1.2, Math.PI * 1.8, false);
-                    graphics.strokePath();
+                    graphics.moveTo(10, 30);
+                    graphics.lineTo(20, 25);
+                    graphics.lineTo(20, 35);
+                    graphics.lineTo(10, 30);
+                    graphics.fillPath();
+                    // Highlight reflective effect
+                    graphics.fillStyle(0xFFFFFF, 0.6);
+                    graphics.fillCircle(30, 30, 10);
                     break;
             }
             
@@ -579,6 +746,56 @@ class LoadingScene extends Phaser.Scene {
         
         this.input.once('pointerdown', () => {
             this.startGame();
+        });
+    }
+
+    // Create a dummy audio for a specific key
+    createDummyAudio(key) {
+        console.log(`Creating dummy audio for: ${key}`);
+        
+        // Create an empty WebAudio buffer to use as a silent sound
+        if (this.sound && this.sound.context) {
+            try {
+                // Create the smallest possible buffer (1 sample, 1 channel)
+                const buffer = this.sound.context.createBuffer(1, 1, 22050);
+                
+                // Create a sound with this empty buffer
+                const sound = this.sound.add(key, {
+                    buffer: buffer,
+                    loop: false,
+                    volume: 0
+                });
+                
+                // Override the methods that would normally use 'cut'
+                sound.play = () => { console.log(`Dummy sound ${key}: play() called`); return sound; };
+                sound.stop = () => { console.log(`Dummy sound ${key}: stop() called`); return sound; };
+                sound.pause = () => { console.log(`Dummy sound ${key}: pause() called`); return sound; };
+                sound.resume = () => { console.log(`Dummy sound ${key}: resume() called`); return sound; };
+                
+                console.log(`Created dummy sound for: ${key}`);
+            } catch (err) {
+                console.error(`Failed to create dummy sound for ${key}:`, err);
+            }
+        }
+    }
+    
+    // Create dummy sounds for all essential audio files
+    createDummyAudios() {
+        console.log("Creating dummy sounds for all essential audio");
+        
+        // List of essential audio keys
+        const essentialAudioKeys = [
+            'bgMusic',
+            'victoryMusic',
+            'gameOverSound',
+            'explosion',
+            'cracksound',
+            'bouncesound'
+        ];
+        
+        // Create dummy sounds for each key
+        essentialAudioKeys.forEach(key => {
+            this.createDummyAudio(key);
         });
     }
 } 

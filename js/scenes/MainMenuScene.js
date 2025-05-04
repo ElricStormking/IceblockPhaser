@@ -137,7 +137,7 @@ class MainMenuScene extends Phaser.Scene {
         this.add.image(1600, 900, 'slingshot').setOrigin(0.5, 0.9).setScale(3); // Larger slingshot
         
         // Add a preview of the chibi girl
-        const preview = this.add.image(300, 900, 'chibi').setScale(0.25);
+        const preview = this.add.image(300, 900, 'chibi_girl1').setScale(0.25);
         this.tweens.add({
             targets: preview,
             alpha: 0.7,
@@ -145,5 +145,10 @@ class MainMenuScene extends Phaser.Scene {
             yoyo: true,
             repeat: -1
         });
+    }
+
+    preload() {
+        // Preload chibi_girl1 image
+        this.load.image('chibi_girl1', 'assets/images/level1/chibi_girl1.png');
     }
 } 

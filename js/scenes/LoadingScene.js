@@ -491,39 +491,8 @@ class LoadingScene extends Phaser.Scene {
     startGame() {
         console.log(`LoadingScene: Starting game for level ${this.levelNumber}`);
         
-        // Ensure that all audio is fully loaded before starting
-        let audioLoaded = true;
-        const requiredAudio = ['bgMusic', 'victoryMusic', 'gameOverSound'];
-        
-        // Add level-specific music to the required list if we're above level 1
-        if (this.levelNumber > 1) {
-            requiredAudio.push(`bgMusic_level${this.levelNumber}`);
-        }
-        
-        // Log all available audio keys
-        console.log("Available audio keys:", this.cache.audio.getKeys().join(", "));
-        
-        // Verify critical audio files are loaded
-        requiredAudio.forEach(key => {
-            if (!this.cache.audio.exists(key)) {
-                if (key.startsWith('bgMusic_level') && key !== 'bgMusic') {
-                    // It's okay if level-specific music is missing, we'll use the default
-                    console.log(`Level-specific music ${key} not found, will use default music`);
-                } else {
-                    console.warn(`Critical audio file ${key} is not loaded - creating dummy sound`);
-                    this.createDummyAudio(key);
-                    audioLoaded = false;
-                }
-            } else {
-                console.log(`Audio ${key} verified loaded`);
-            }
-        });
-        
-        if (!audioLoaded) {
-            console.warn("Some audio files are not properly loaded, game will use fallbacks");
-        } else {
-            console.log("All critical audio files loaded successfully");
-        }
+        // Double-check audio initialization
+        this.ensureAllAudioIsAvailable();
         
         // Clean up any existing scenes - make sure to stop the GameScene if it's already running
         if (this.scene.isActive('GameScene')) {
@@ -536,12 +505,84 @@ class LoadingScene extends Phaser.Scene {
             this.scene.stop('UIScene');
         }
         
-        // Add a small delay before starting the next scene to allow cleanup
-        this.time.delayedCall(100, () => {
+        // Add a larger delay before starting the next scene to ensure everything is cleaned up
+        this.time.delayedCall(300, () => {
+            console.log("Starting GameScene after delay");
             // Pass the level number to the GameScene
             this.scene.start('GameScene', { levelNumber: this.levelNumber });
-            this.scene.launch('UIScene');
+            
+            // Short delay before starting UI scene to prevent race conditions
+            this.time.delayedCall(100, () => {
+                this.scene.launch('UIScene');
+            });
         });
+    }
+    
+    // Ensure all required audio is available or replaced with dummies
+    ensureAllAudioIsAvailable() {
+        console.log("Ensuring all audio is available or replaced with dummies");
+        
+        // List of all audio assets that should be available
+        const requiredAudio = [
+            'bgMusic',
+            'victoryMusic', 
+            'gameOverSound',
+            'explosion',
+            'cracksound',
+            'bouncesound'
+        ];
+        
+        // Add level-specific music to the required list if we're above level 1
+        if (this.levelNumber > 1) {
+            requiredAudio.push(`bgMusic_level${this.levelNumber}`);
+        }
+        
+        // Log all available audio keys
+        if (this.cache && this.cache.audio) {
+            const availableAudio = this.cache.audio.getKeys();
+            console.log("Available audio keys:", availableAudio.join(", "));
+            
+            // Check that each required audio exists and create dummies if needed
+            requiredAudio.forEach(key => {
+                if (!availableAudio.includes(key)) {
+                    console.warn(`Required audio '${key}' not found - creating dummy`);
+                    this.createDummyAudio(key);
+                } else {
+                    console.log(`Audio '${key}' is available`);
+                    
+                    try {
+                        // Test that the sound can be played without errors
+                        const sound = this.sound.add(key, { volume: 0 });
+                        
+                        // Ensure the sound has a cut method
+                        if (typeof sound.cut !== 'function') {
+                            console.warn(`Sound '${key}' missing cut method - fixing`);
+                            sound.cut = function() {
+                                console.log(`Added cut method called for ${key}`);
+                                if (this.isPlaying) {
+                                    this.stop();
+                                }
+                                return this;
+                            };
+                        }
+                        
+                        // Clean up the test sound
+                        sound.destroy();
+                    } catch (err) {
+                        console.error(`Error testing sound '${key}':`, err);
+                        // If there was an error, create a dummy replacement
+                        this.createDummyAudio(key);
+                    }
+                }
+            });
+        } else {
+            console.warn("Audio cache not available - creating all dummy sounds");
+            requiredAudio.forEach(key => {
+                this.createDummyAudio(key);
+            });
+        }
+        
+        console.log("Audio initialization complete");
     }
 
     // Add a new method to create bomb textures programmatically
@@ -753,28 +794,112 @@ class LoadingScene extends Phaser.Scene {
     createDummyAudio(key) {
         console.log(`Creating dummy audio for: ${key}`);
         
-        // Create an empty WebAudio buffer to use as a silent sound
-        if (this.sound && this.sound.context) {
-            try {
-                // Create the smallest possible buffer (1 sample, 1 channel)
-                const buffer = this.sound.context.createBuffer(1, 1, 22050);
-                
-                // Create a sound with this empty buffer
-                const sound = this.sound.add(key, {
-                    buffer: buffer,
-                    loop: false,
-                    volume: 0
-                });
-                
-                // Override the methods that would normally use 'cut'
-                sound.play = () => { console.log(`Dummy sound ${key}: play() called`); return sound; };
-                sound.stop = () => { console.log(`Dummy sound ${key}: stop() called`); return sound; };
-                sound.pause = () => { console.log(`Dummy sound ${key}: pause() called`); return sound; };
-                sound.resume = () => { console.log(`Dummy sound ${key}: resume() called`); return sound; };
-                
-                console.log(`Created dummy sound for: ${key}`);
-            } catch (err) {
-                console.error(`Failed to create dummy sound for ${key}:`, err);
+        try {
+            // Check if sound system is available
+            if (!this.sound || !this.sound.context) {
+                console.warn(`Cannot create dummy audio for ${key}: sound system not available`);
+                return;
+            }
+            
+            // If the sound already exists, remove it first to avoid conflicts
+            if (this.sound.get(key)) {
+                this.sound.remove(key);
+                console.log(`Removed existing sound instance for ${key}`);
+            }
+            
+            // Create an empty WebAudio buffer to use as a silent sound
+            const buffer = this.sound.context.createBuffer(1, 1, 22050);
+            
+            // Create a sound with this empty buffer
+            const dummySound = {
+                key: key,
+                isPlaying: false,
+                isPaused: false,
+                play: (config) => { 
+                    console.log(`Dummy sound ${key}: play() called`); 
+                    dummySound.isPlaying = true;
+                    dummySound.isPaused = false;
+                    return dummySound; 
+                },
+                stop: () => { 
+                    console.log(`Dummy sound ${key}: stop() called`); 
+                    dummySound.isPlaying = false;
+                    return dummySound; 
+                },
+                pause: () => { 
+                    console.log(`Dummy sound ${key}: pause() called`); 
+                    dummySound.isPaused = true;
+                    return dummySound; 
+                },
+                resume: () => { 
+                    console.log(`Dummy sound ${key}: resume() called`); 
+                    dummySound.isPaused = false;
+                    return dummySound; 
+                },
+                setVolume: (volume) => { 
+                    console.log(`Dummy sound ${key}: setVolume(${volume}) called`); 
+                    return dummySound; 
+                },
+                setRate: (rate) => { 
+                    console.log(`Dummy sound ${key}: setRate(${rate}) called`); 
+                    return dummySound; 
+                },
+                setLoop: (loop) => { 
+                    console.log(`Dummy sound ${key}: setLoop(${loop}) called`); 
+                    return dummySound; 
+                },
+                // Some Phaser versions use 'cut' method, add a dummy implementation
+                cut: () => { 
+                    console.log(`Dummy sound ${key}: cut() called`); 
+                    dummySound.isPlaying = false;
+                    return dummySound; 
+                },
+                // Add any other methods that might be called
+                destroy: () => { 
+                    console.log(`Dummy sound ${key}: destroy() called`); 
+                    return dummySound; 
+                }
+            };
+            
+            // Add the dummy sound to the cache
+            this.cache.audio.add(key, buffer);
+            
+            // Add the dummy sound to the sound manager
+            this.sound.add(key, { volume: 0 });
+            
+            // Override the real sound with our dummy implementation
+            this.sound.sounds.forEach(sound => {
+                if (sound.key === key) {
+                    // Override methods to our dummy implementations
+                    sound.play = dummySound.play;
+                    sound.stop = dummySound.stop;
+                    sound.pause = dummySound.pause;
+                    sound.resume = dummySound.resume;
+                    sound.setVolume = dummySound.setVolume;
+                    sound.setRate = dummySound.setRate;
+                    sound.setLoop = dummySound.setLoop;
+                    sound.cut = dummySound.cut;
+                    sound.destroy = dummySound.destroy;
+                }
+            });
+            
+            console.log(`Created dummy sound for: ${key}`);
+        } catch (err) {
+            console.error(`Failed to create dummy sound for ${key}:`, err);
+            
+            // Last resort: create a global placeholder
+            if (!window._dummySounds) {
+                window._dummySounds = {};
+            }
+            
+            if (!window._dummySounds[key]) {
+                window._dummySounds[key] = {
+                    play: () => console.log(`Global dummy ${key}: play() called`),
+                    stop: () => console.log(`Global dummy ${key}: stop() called`),
+                    pause: () => console.log(`Global dummy ${key}: pause() called`),
+                    resume: () => console.log(`Global dummy ${key}: resume() called`),
+                    cut: () => console.log(`Global dummy ${key}: cut() called`)
+                };
             }
         }
     }

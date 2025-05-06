@@ -137,10 +137,34 @@ class UIScene extends Phaser.Scene {
     }
 
     updateShots(shots) {
+        // Add null check to prevent errors
+        if (!this.shotsText || !this.shotsText.setText) {
+            console.warn('UIScene: shotsText is not properly initialized');
+            return;
+        }
+        
+        // Make sure shots is valid
+        if (shots === undefined || shots === null) {
+            console.warn('UIScene: shots value is undefined or null');
+            shots = 0;
+        }
+        
         this.shotsText.setText(`Shots: ${shots}`);
     }
 
     updatePercentage(percentage) {
+        // Add null check to prevent errors
+        if (!this.percentageText || !this.progressText || !this.progressBar) {
+            console.warn('UIScene: percentage display elements are not properly initialized');
+            return;
+        }
+        
+        // Make sure percentage is a valid number
+        if (percentage === undefined || percentage === null || isNaN(percentage)) {
+            console.warn('UIScene: percentage value is invalid:', percentage);
+            percentage = 0;
+        }
+        
         // Ensure percentage is a number and round it
         const roundedPercentage = Math.round(percentage);
         

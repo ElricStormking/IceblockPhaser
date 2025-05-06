@@ -821,6 +821,614 @@ class BombUtils {
         // Add a small camera shake
         this.scene.cameras.main.shake(150, 0.005);
     }
+    
+    // Handle Ricochet Bomb
+    handleRicochetBomb(x, y, block, velocity) {
+        try {
+            if (!this.scene) return;
+            
+            // Get or create the bomb
+            let bomb = this.scene.bomb;
+            
+            // Safety check - if bomb doesn't exist
+            if (!bomb) {
+                console.warn("No bomb reference in handleRicochetBomb");
+                return;
+            }
+            
+            // Safety check - if bomb is already destroyed
+            if (!bomb.scene) {
+                console.warn("Bomb already destroyed in handleRicochetBomb");
+                return;
+            }
+            
+            // Safety check - if bomb has already exploded
+            if (bomb.hasExploded) {
+                console.warn("Bomb already exploded in handleRicochetBomb");
+                return;
+            }
+            
+            // If we don't have a bomb reference or it's the first hit, set up the ricochet properties
+            if (!bomb.isRicochet) {
+                console.log("Setting up ricochet bomb properties");
+                
+                // Mark as ricochet bomb
+                bomb.isRicochet = true;
+                bomb.bounceCount = 0;
+                bomb.bounceTime = Date.now();
+                bomb.hasExploded = false;
+                bomb.lastBounceTime = 0;
+                bomb.lastBounceX = -1000;
+                bomb.lastBounceY = -1000;
+                
+                // Set restitution (bounciness) to make it bounce more - reduced even further to 0.5
+                bomb.setBounce(0.5);
+                bomb.setFriction(0.15);  // Increased friction
+                // Use direct body damping properties instead of non-existent setDamping method
+                if (bomb.body) {
+                    bomb.body.frictionAir = 0.005; // Increased to slow down faster
+                    if (bomb.body.force) {
+                        bomb.body.force.x = 0;
+                        bomb.body.force.y = 0;
+                    }
+                }
+                
+                // Set very low velocity limits - drastically reduced to make gentle bounces
+                if (bomb.body) {
+                    if (typeof bomb.body.maxVelocity !== 'undefined') {
+                        bomb.body.maxVelocity.x = 40; // Reduced from 450 to 40
+                        bomb.body.maxVelocity.y = 40; // Reduced from 450 to 40
+                    }
+                }
+                
+                // Create bounce trail effect
+                bomb.bounceTrail = this.createRicochetTrail(bomb);
+                
+                // Set up 5-second explosion timer
+                if (bomb.explosionTimer) {
+                    bomb.explosionTimer.remove();
+                }
+                
+                bomb.explosionTimer = this.scene.time.delayedCall(5000, () => {
+                    if (bomb && bomb.scene && !bomb.hasExploded) {
+                        this.explodeRicochetBomb(bomb);
+                    }
+                });
+                
+                // Add a visual countdown indicator
+                this.addRicochetCountdown(bomb);
+                
+                // Play a bouncing sound
+                if (this.scene.sound && this.scene.sound.add) {
+                    try {
+                        const bounceSound = this.scene.sound.add('bouncesound');
+                        bounceSound.play({ volume: 0.3 });
+                    } catch (e) {
+                        console.log("Sound not available:", e);
+                    }
+                }
+            } else {
+                // This is a subsequent bounce - check if we should process this bounce
+                const now = Date.now();
+                const minBounceInterval = 250; // Minimum ms between bounce sound/effects
+                const canBounce = (now - (bomb.lastBounceTime || 0)) > minBounceInterval;
+                
+                // Calculate distance from last bounce
+                const lastX = bomb.lastBounceX || -1000;
+                const lastY = bomb.lastBounceY || -1000;
+                const distFromLastBounce = Phaser.Math.Distance.Between(x, y, lastX, lastY);
+                
+                // We need at least 50 pixels of distance between bounces
+                const minBounceDistance = 50;
+                
+                if (canBounce && distFromLastBounce > minBounceDistance) {
+                    // Update bounce tracking properties
+                    bomb.bounceCount = (bomb.bounceCount || 0) + 1;
+                    bomb.lastBounceTime = now;
+                    bomb.lastBounceX = x;
+                    bomb.lastBounceY = y;
+                    
+                    // Play bounce sound with increased pitch based on bounce count
+                    if (this.scene.sound && this.scene.sound.add) {
+                        try {
+                            const bounceSound = this.scene.sound.add('bouncesound');
+                            const pitch = 1.0 + (bomb.bounceCount * 0.05); // Increase pitch with each bounce
+                            bounceSound.play({ 
+                                volume: 0.3,
+                                rate: Math.min(pitch, 1.5) // Limit max pitch
+                            });
+                        } catch (e) {
+                            console.log("Sound not available:", e);
+                        }
+                    }
+                    
+                    // Create a small flash effect at bounce point
+                    this.createBounceFlash(x, y);
+                    
+                    // Update the countdown text position if it exists
+                    if (bomb.countdownText && bomb.countdownText.scene) {
+                        bomb.countdownText.setPosition(bomb.x, bomb.y - 30);
+                    }
+                    
+                    // Make sure velocity isn't too low after the bounce
+                    if (bomb.body && bomb.body.velocity) {
+                        const vx = bomb.body.velocity.x;
+                        const vy = bomb.body.velocity.y;
+                        const speed = Math.sqrt(vx * vx + vy * vy);
+                        
+                        // Ensure minimum velocity after bounce
+                        const minSpeed = 25;
+                        if (speed < minSpeed) {
+                            const scale = minSpeed / Math.max(speed, 1);
+                            bomb.setVelocity(vx * scale, vy * scale);
+                        }
+                    }
+                }
+            }
+            
+            // Handle collision with specific block types
+            if (block && bomb && bomb.body && bomb.body.velocity) {
+                try {
+                    // Calculate reflection vector based on the collision with the block
+                    // First, get the normal vector from the block to the bomb
+                    const dx = bomb.x - block.x;
+                    const dy = bomb.y - block.y;
+                    
+                    // Normalize the normal vector
+                    const length = Math.sqrt(dx * dx + dy * dy);
+                    const nx = length > 0 ? dx / length : 0;
+                    const ny = length > 0 ? dy / length : -1;
+                    
+                    // Get current velocity
+                    const vx = bomb.body.velocity.x;
+                    const vy = bomb.body.velocity.y;
+                    
+                    // Calculate dot product of velocity and normal
+                    const dot = vx * nx + vy * ny;
+                    
+                    // Calculate reflection vector: r = v - 2(v·n)n
+                    const reflectX = vx - 2 * dot * nx;
+                    const reflectY = vy - 2 * dot * ny;
+                    
+                    // Apply some slight randomization for more natural bounces (±10%)
+                    const randomFactor = 0.9 + Math.random() * 0.2;
+                    
+                    // Apply the reflection with a slight boost 
+                    const speedFactor = 1.05; // 5% boost to counteract friction
+                    bomb.setVelocity(
+                        reflectX * speedFactor * randomFactor,
+                        reflectY * speedFactor * randomFactor
+                    );
+                    
+                    // Make sure we're not stuck in the block by moving the bomb slightly 
+                    // along the normal vector away from the block
+                    const pushDistance = 5; // 5 pixels away from the block
+                    bomb.x += nx * pushDistance;
+                    bomb.y += ny * pushDistance;
+                    
+                    // Now handle specific block types
+                    if (block.blockType) {
+                        switch (block.blockType) {
+                            case this.scene.blockTypes?.TYPES?.DYNAMITE:
+                                // Dynamite blocks explode on contact
+                                if (this.scene.destroyIceBlock) {
+                                    this.scene.destroyIceBlock(block);
+                                }
+                                break;
+                                
+                            case this.scene.blockTypes?.TYPES?.BOUNCY:
+                                // Add extra velocity on bouncy blocks
+                                if (bomb.body) {
+                                    const speedMultiplier = 1.2;
+                                    bomb.setVelocity(
+                                        bomb.body.velocity.x * speedMultiplier,
+                                        bomb.body.velocity.y * speedMultiplier
+                                    );
+                                    
+                                    // Create a special bouncy block effect
+                                    if (this.scene.createBouncyHitEffect) {
+                                        this.scene.createBouncyHitEffect(x, y);
+                                    }
+                                }
+                                break;
+                                
+                            case this.scene.blockTypes?.TYPES?.ETERNAL:
+                            case this.scene.blockTypes?.TYPES?.STRONG:
+                                // Damage the block
+                                if (this.scene.damageIceBlock) {
+                                    this.scene.damageIceBlock(block);
+                                }
+                                break;
+                                
+                            default:
+                                // Default (standard blocks) - destroy them
+                                if (this.scene.destroyIceBlock) {
+                                    this.scene.destroyIceBlock(block);
+                                }
+                                break;
+                        }
+                    }
+                    
+                    // Apply velocity cap after block collision
+                    if (bomb.body && bomb.body.velocity) {
+                        const currentSpeed = Math.sqrt(
+                            bomb.body.velocity.x * bomb.body.velocity.x + 
+                            bomb.body.velocity.y * bomb.body.velocity.y
+                        );
+                        
+                        const maxSpeed = 40;
+                        if (currentSpeed > maxSpeed) {
+                            const scale = maxSpeed / currentSpeed;
+                            bomb.setVelocity(
+                                bomb.body.velocity.x * scale,
+                                bomb.body.velocity.y * scale
+                            );
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error in block collision handling:", error);
+                }
+            }
+            
+        } catch (error) {
+            console.error("Error in handleRicochetBomb:", error);
+        }
+    }
+    
+    // Handle ricochet bomb hitting world boundaries
+    handleRicochetBoundaryHit(bomb) {
+        try {
+            if (!bomb || !bomb.body) return;
+            
+            // Increment bounce count
+            bomb.bounceCount = (bomb.bounceCount || 0) + 1;
+            
+            // Create a bounce flash at the bomb's position
+            this.createBounceFlash(bomb.x, bomb.y);
+            
+            // Ensure the bomb maintains sufficient velocity after boundary hit
+            // Drastically reduced for gentler bounces
+            const minSpeed = 25;  // Reduced from 250 to 25
+            const maxSpeed = 40;  // Reduced from 400 to 40
+            
+            // Only proceed if body has velocity
+            if (bomb.body && bomb.body.velocity) {
+                const vx = bomb.body.velocity.x;
+                const vy = bomb.body.velocity.y;
+                const speed = Math.sqrt(vx * vx + vy * vy);
+                
+                if (speed < minSpeed) {
+                    // Scale velocity to ensure minimum speed
+                    const scale = minSpeed / Math.max(speed, 1);
+                    bomb.setVelocity(vx * scale, vy * scale);
+                } else if (speed > maxSpeed) {
+                    // Cap maximum speed
+                    const scale = maxSpeed / speed;
+                    bomb.setVelocity(vx * scale, vy * scale);
+                }
+            }
+            
+            // Play bounce sound
+            if (this.scene && this.scene.sound && this.scene.sound.add) {
+                try {
+                    const bounceSound = this.scene.sound.add('bouncesound');
+                    bounceSound.play({ volume: 0.2 });
+                } catch (e) {
+                    console.log("Sound not available:", e);
+                }
+            }
+            
+            // Update the countdown text position if it exists
+            if (bomb.countdownText && bomb.countdownText.scene) {
+                bomb.countdownText.setPosition(bomb.x, bomb.y - 30);
+            }
+            
+        } catch (error) {
+            console.error("Error in handleRicochetBoundaryHit:", error);
+        }
+    }
+    
+    // Create a ricochet trail effect
+    createRicochetTrail(bomb) {
+        if (!this.scene || !bomb) return null;
+        
+        // Create particle emitter for the ricochet trail
+        const particles = this.scene.add.particles('particle');
+        particles.setDepth(5);
+        
+        const emitter = particles.createEmitter({
+            lifespan: 400,
+            speed: { min: 5, max: 15 },
+            scale: { start: 0.3, end: 0 },
+            alpha: { start: 0.8, end: 0 },
+            blendMode: 'ADD',
+            tint: 0x00FFFF, // Cyan for ricochet
+            frequency: 15, // Emit particles more frequently than regular bounce
+            emitZone: {
+                type: 'edge',
+                source: new Phaser.Geom.Circle(0, 0, 8),
+                quantity: 2
+            }
+        });
+        
+        // Track the bomb to emit particles
+        emitter.startFollow(bomb);
+        
+        // Store the emitter on the bomb for later reference
+        bomb.trailEmitter = emitter;
+        
+        // Store particles on the bomb for cleanup
+        bomb.trailParticles = particles;
+        
+        return particles;
+    }
+    
+    // Create a flash effect at bounce point
+    createBounceFlash(x, y) {
+        if (!this.scene) return;
+        
+        // Create a small flash circle
+        const flash = this.scene.add.circle(x, y, 25, 0x00FFFF, 0.8);
+        flash.setDepth(5);
+        
+        // Animate it
+        this.scene.tweens.add({
+            targets: flash,
+            alpha: 0,
+            scale: 2.5,
+            duration: 200,
+            ease: 'Power2',
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Add some tiny particles
+        const particles = this.scene.add.particles('particle');
+        particles.setDepth(5);
+        
+        const emitter = particles.createEmitter({
+            speed: { min: 40, max: 120 },
+            scale: { start: 0.4, end: 0 },
+            alpha: { start: 1.0, end: 0 },
+            lifespan: 400,
+            blendMode: 'ADD',
+            tint: 0x00FFFF, // Cyan for ricochet
+            quantity: 15
+        });
+        
+        // Emit particles at bounce point
+        emitter.explode(15, x, y);
+        
+        // Add a small concentric ring effect
+        const ring = this.scene.add.circle(x, y, 5, 0x00FFFF, 0);
+        ring.setStrokeStyle(2, 0x00FFFF, 1);
+        ring.setDepth(5);
+        
+        this.scene.tweens.add({
+            targets: ring,
+            scale: 5,
+            alpha: 0,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => {
+                ring.destroy();
+            }
+        });
+        
+        // Destroy particles after they're done
+        this.scene.time.delayedCall(500, () => {
+            if (particles && particles.scene) {
+                particles.destroy();
+            }
+        });
+    }
+    
+    // Add a countdown indicator to ricochet bomb
+    addRicochetCountdown(bomb) {
+        if (!this.scene || !bomb) return;
+        
+        // Create the countdown text
+        const countdownText = this.scene.add.text(
+            bomb.x, 
+            bomb.y - 30, 
+            '5', 
+            { 
+                fontFamily: 'Arial',
+                fontSize: '24px',
+                color: '#00FFFF',
+                stroke: '#000000',
+                strokeThickness: 4,
+                align: 'center'
+            }
+        );
+        countdownText.setOrigin(0.5, 0.5);
+        countdownText.setDepth(10);
+        
+        // Store reference on the bomb
+        bomb.countdownText = countdownText;
+        
+        // Update the countdown text every second
+        let secondsLeft = 5;
+        
+        const updateCountdown = () => {
+            secondsLeft--;
+            
+            // Make sure the text and bomb still exist
+            if (countdownText && countdownText.scene && bomb && bomb.scene) {
+                // Update text
+                countdownText.setText(secondsLeft.toString());
+                
+                // Update position to follow the bomb
+                countdownText.setPosition(bomb.x, bomb.y - 30);
+                
+                // Make text pulse on each second
+                this.scene.tweens.add({
+                    targets: countdownText,
+                    scale: 1.5,
+                    duration: 100,
+                    yoyo: true,
+                    ease: 'Sine.easeOut'
+                });
+                
+                // Change color as time decreases
+                if (secondsLeft <= 2) {
+                    countdownText.setColor('#FF0000'); // Red for last 2 seconds
+                } else if (secondsLeft <= 3) {
+                    countdownText.setColor('#FFFF00'); // Yellow for 3 seconds
+                }
+                
+                // Continue countdown if there's time left
+                if (secondsLeft > 0 && !bomb.hasExploded) {
+                    this.scene.time.delayedCall(1000, updateCountdown);
+                }
+            }
+        };
+        
+        // Start the countdown
+        this.scene.time.delayedCall(1000, updateCountdown);
+    }
+    
+    // Explode the ricochet bomb
+    explodeRicochetBomb(bomb) {
+        if (!this.scene) return;
+        
+        // Safety check - if bomb is null or already destroyed
+        if (!bomb) {
+            console.warn("Attempt to explode null or undefined bomb");
+            return;
+        }
+        
+        // Check if bomb has already exploded to prevent duplicates
+        if (bomb.hasExploded) {
+            console.log("Bomb already exploded, skipping");
+            return;
+        }
+        
+        console.log("Ricochet bomb exploding at:", bomb.x, bomb.y);
+        
+        try {
+            // CRITICAL: Immediately mark as exploded to prevent multiple explosions
+            bomb.hasExploded = true;
+            
+            // Store all bomb info we need before potentially destroying it
+            const bombInfo = {
+                x: bomb.x || 0,
+                y: bomb.y || 0,
+                type: bomb.bombType || this.scene.BOMB_TYPES?.RICOCHET || 'ricochet_bomb',
+                velocity: bomb.body?.velocity ? { x: bomb.body.velocity.x, y: bomb.body.velocity.y } : null
+            };
+            
+            // First detach the bomb from the physics system to prevent further collisions during cleanup
+            if (bomb.body && this.scene.matter && this.scene.matter.world) {
+                try {
+                    // Remove from world but don't destroy the gameObject yet
+                    this.scene.matter.world.remove(bomb.body);
+                } catch (e) {
+                    console.warn("Could not remove bomb body from physics world:", e);
+                }
+            }
+            
+            // Clean up all bomb resources in a specific order to avoid errors
+            
+            // 1. Clean up the countdown text
+            if (bomb.countdownText) {
+                if (bomb.countdownText.scene) {
+                    bomb.countdownText.destroy();
+                }
+                bomb.countdownText = null;
+            }
+            
+            // 2. Clean up any timers
+            if (bomb.explosionTimer) {
+                bomb.explosionTimer.remove();
+                bomb.explosionTimer = null;
+            }
+            
+            if (bomb.countdown) {
+                bomb.countdown.remove();
+                bomb.countdown = null;
+            }
+            
+            // 3. Clean up the trail
+            if (bomb.trailEmitter) {
+                try {
+                    bomb.trailEmitter.stopFollow();
+                    bomb.trailEmitter.stop();
+                } catch (e) {
+                    console.warn("Error stopping trail emitter:", e);
+                }
+                bomb.trailEmitter = null;
+            }
+            
+            if (bomb.trailParticles && bomb.trailParticles.scene) {
+                try {
+                    bomb.trailParticles.destroy();
+                } catch (e) {
+                    console.warn("Error destroying trail particles:", e);
+                }
+                bomb.trailParticles = null;
+            }
+            
+            // 4. Remove references from the scene to prevent update errors
+            // IMPORTANT: Clear the reference in scene.bomb before explosion effects
+            // to prevent trying to access destroyed objects during effect creation
+            if (this.scene && this.scene.bomb === bomb) {
+                this.scene.bomb = null;
+            }
+            
+            // 5. Create the explosion at the stored position
+            // AFTER we've cleared the bomb reference
+            if (this.scene && this.scene.handleRicochetBomb) {
+                // Use the cached coordinates and let GameScene handle the explosion
+                this.scene.handleRicochetBomb(bombInfo.x, bombInfo.y);
+            } else if (this.createExplosion) {
+                // Fallback if handleRicochetBomb is not available
+                this.createExplosion(bombInfo.x, bombInfo.y);
+                if (this.scene.destroyBlocksInRadius) {
+                    this.scene.destroyBlocksInRadius(bombInfo.x, bombInfo.y, 150);
+                }
+                
+                // Call reset manually if using the fallback path
+                this.scene.time.delayedCall(1000, () => {
+                    if (this.scene && this.scene.resetBomb) {
+                        this.scene.resetBomb();
+                    }
+                });
+            }
+            
+            // 6. Finally destroy the bomb object itself if it still exists
+            if (bomb.scene) {
+                try {
+                    bomb.destroy();
+                } catch (e) {
+                    console.warn("Error destroying bomb gameObject:", e);
+                }
+            }
+            
+            console.log("Ricochet bomb cleanup complete");
+        } catch (error) {
+            console.error("Error in explodeRicochetBomb:", error);
+            
+            // Recovery: If error occurred, make sure to null the scene's bomb reference
+            if (this.scene) {
+                if (this.scene.bomb === bomb) {
+                    this.scene.bomb = null;
+                }
+                
+                // Force reset the game state
+                if (this.scene.forceResetGameState) {
+                    this.scene.time.delayedCall(500, () => {
+                        this.scene.forceResetGameState();
+                    });
+                } else if (this.scene.resetBomb) {
+                    this.scene.time.delayedCall(500, () => {
+                        this.scene.resetBomb();
+                    });
+                }
+            }
+        }
+    }
 }
 
 // Export the BombUtils class

@@ -44,9 +44,27 @@ class GameStateManager {
                 this.scene.chibiImage.setAlpha(1);
             }
             
-            // Remove the completion veil if it hasn't been removed yet
-            if (this.scene.completionVeilRemoved === false && this.scene.removeCompletionVeil) {
-                this.scene.removeCompletionVeil();
+            // Force remove the completion veil regardless of previous removal state
+            if (this.scene.completionVeil) {
+                console.log("Force removing completion veil during level completion");
+                this.scene.completionVeilRemoved = true;
+                
+                // If the completion veil is a container of blocks
+                if (this.scene.veilContainer && this.scene.veilContainer.scene) {
+                    // Immediately hide and destroy the veil container
+                    this.scene.veilContainer.setVisible(false);
+                    this.scene.veilContainer.destroy(true);
+                    this.scene.veilContainer = null;
+                }
+                
+                // Handle frost graphics separately
+                if (this.scene.frostGraphics && this.scene.frostGraphics.scene) {
+                    this.scene.frostGraphics.setVisible(false);
+                    this.scene.frostGraphics.destroy();
+                }
+                
+                // Ensure the completionVeil reference is cleared
+                this.scene.completionVeil = null;
             }
             
             // Clear all remaining blue veils

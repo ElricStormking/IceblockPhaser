@@ -2,9 +2,9 @@
     constructor() {
         super({ key: 'GameScene' });
         
-        // Reposition slingshot to left side of screen
+        // Reposition slingshot to middle left side of screen
         this.SLINGSHOT_X = 300; // Keep at 300 (positioned on left side)
-        this.SLINGSHOT_Y = 800; // Keep at same height
+        this.SLINGSHOT_Y = 540; // Changed from 800 to 540 (middle height of 1080px screen)
         this.MAX_DRAG_DISTANCE = 200;
         this.SHOT_POWER = 0.13; // Increased shot power (from 0.07)
         this.MAX_SHOTS = 20; // Doubled from 10 for testing
@@ -13,6 +13,20 @@
         this.revealPercentage = 0;
         this.targetPercentage = 85;
         this.UI_DEPTH = 1000; // UI depth for consistent layering
+        
+        // Voice congratulation messages
+        this.voiceMessages = [
+            "fantastic",
+            "great_aim",
+            "marvelous",
+            "superb",
+            "amazing",
+            "wonderful",
+            "nice_shot",
+            "incredible"
+        ];
+        this.lastRevealPercentage = 0; // Track previous percentage for voice triggers
+        this.voiceThreshold = 10; // Changed from 30 to 10 - percentage change needed to trigger voice message
         
         // We'll delegate these properties to the GameStateManager
         // But we keep references here for compatibility
@@ -96,6 +110,27 @@
         this.willReadPixelsFrequently = true;
     }
 
+    preload() {
+        // This method is called by Phaser before create()
+        // We'll use it to preload voice audio assets
+        try {
+            console.log("Preloading voice message assets...");
+            
+            // Load voice message assets from local filesystem with proper absolute paths
+            this.voiceMessages.forEach(message => {
+                // Use relative path starting with assets, no leading slash
+                // Do NOT include any server port or domain
+                const path = `assets/audio/voice/${message}.mp3`;
+                
+                // Set both the key and the URL to the same path for consistent loading
+                this.load.audio(`voice_${message}`, path);
+                console.log(`Loading voice message: ${path}`);
+            });
+        } catch (error) {
+            console.error("Error preloading voice assets:", error);
+        }
+    }
+
     create() {
         try {
             console.log(`GameScene: Creating scene for level ${this.currentLevel}`);
@@ -109,6 +144,9 @@
             // Initialize the game state manager
             this.gameStateManager = new GameStateManager(this);
             this.gameStateManager.init();
+            
+            // Initialize voice files
+            this.initializeVoiceAssets();
             
             // Initialize the level manager
             this.initializeLevelManager().then(() => {
@@ -144,6 +182,77 @@
             console.log("GameScene creation complete");
         } catch (error) {
             console.error("Error in create function:", error);
+        }
+    }
+    
+    // Add a new method to handle loading voice files from local paths
+    loadVoiceFiles() {
+        try {
+            console.log("Loading voice files from local paths...");
+            
+            // Reset the loader to clear any previous configurations
+            this.load.reset();
+            
+            // Force absolute paths with no server prefixes
+            this.load.setBaseURL('');
+            this.load.setPath('');
+            
+            // Load each voice file with explicit full paths
+            this.voiceMessages.forEach(message => {
+                // Use absolute path starting from assets folder
+                const filePath = `assets/audio/voice/${message}.mp3`;
+                const key = `voice_${message}`;
+                
+                // Load the file with the explicit path
+                console.log(`Loading voice file: ${filePath}`);
+                this.load.audio(key, filePath);
+            });
+            
+            // Start loading and set up completion callback
+            this.load.once('complete', () => {
+                console.log("Voice files loading complete");
+                
+                // Verify which files were successfully loaded
+                let loadedCount = 0;
+                this.voiceMessages.forEach(message => {
+                    const key = `voice_${message}`;
+                    if (this.cache.audio.exists(key)) {
+                        loadedCount++;
+                        console.log(`Voice file loaded: ${key}`);
+                    } else {
+                        console.warn(`Failed to load voice file: ${key}`);
+                    }
+                });
+                
+                console.log(`Voice files loaded: ${loadedCount}/${this.voiceMessages.length}`);
+                
+                // Emit an event that voice files are ready
+                this.events.emit('voiceFilesReady', loadedCount);
+            });
+            
+            this.load.start();
+            
+        } catch (error) {
+            console.error("Error loading voice files:", error);
+        }
+    }
+    
+    // Update initializeVoiceAssets to use the new dedicated method
+    initializeVoiceAssets() {
+        try {
+            console.log("Initializing voice assets...");
+            
+            // Check for system type and adjust paths if needed
+            const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
+            console.log(`Environment: ${isBrowser ? 'Browser' : 'Other'}, Running from: ${window.location ? window.location.href : 'unknown'}`);
+            
+            // Use the dedicated method to load voice files
+            this.loadVoiceFiles();
+            
+            console.log("Voice asset initialization complete");
+            
+        } catch (error) {
+            console.error("Error initializing voice assets:", error);
         }
     }
     
@@ -700,7 +809,7 @@
     createSlingshot() {
         try {
             this.slingshot = this.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y, 'slingshot');
-            this.slingshot.setOrigin(0.5, 0.9); // Adjust origin to bottom center
+            this.slingshot.setOrigin(0.5, 0.5); // Changed from 0.9 to 0.5 for center alignment
             this.slingshot.setDepth(10); // Above all game elements but below UI
             
             // Add elastic line for slingshot
@@ -1734,6 +1843,25 @@
             this.cameras.main.flash(300, 255, 255, 255, 0.3);
         }
         
+        // Check if we've revealed enough for a congratulatory voice message
+        const percentageChange = this.revealPercentage - this.lastRevealPercentage;
+        if (percentageChange >= this.voiceThreshold) {
+            if (this.debugMode) {
+                console.log(`Voice message triggered at ${this.revealPercentage}% (${percentageChange}% change)`);
+            }
+            
+            // Play voice message with text display
+            this.playRandomVoiceMessage();
+            
+            // For larger percentage changes, show special effect text
+            if (percentageChange >= 20) {
+                this.displaySpecialClearText(percentageChange);
+            }
+            
+            // Update last reveal percentage to current to avoid multiple triggers
+            this.lastRevealPercentage = this.revealPercentage;
+        }
+        
         // Remove the completion veil when we reach 80%
         if (previousPercentage < 80 && this.revealPercentage >= 80) {
             this.removeCompletionVeil();
@@ -1745,11 +1873,7 @@
         }
     }
     
-    // REMOVED: createExplosion - moved to BlockUtils
-    createExplosion(x, y) {
-        // This method has been moved to BlockUtils
-        this.blockUtils.createExplosion(x, y);
-    }
+
 
     checkLevelCompletion() {
         // Forward to gameStateManager
@@ -1919,6 +2043,12 @@
     createDynamicBomb(x, y, bombType, forceX, forceY) {
         // Update bomb state tracking
         this.bombState.lastBombFired = Date.now();
+        
+        // Reset the last reveal percentage for the new shot
+        this.lastRevealPercentage = this.revealPercentage;
+        if (this.debugMode) {
+            console.log(`Reset voice tracking: current reveal is ${this.revealPercentage}%`);
+        }
         
         // Set bomb properties based on type
         let bombProperties = {
@@ -2423,18 +2553,29 @@
         
         // Recreate the completion veil
         if (this.completionVeil) {
+            console.log("Cleaning up previous completion veil during level reset");
+            
             // If it's a container, destroy all children
             if (this.veilContainer) {
+                this.veilContainer.setVisible(false);
                 this.veilContainer.destroy(true);
                 this.veilContainer = null;
             } else if (this.completionVeil.scene) {
+                this.completionVeil.setVisible(false);
                 this.completionVeil.destroy();
             }
+            
+            this.completionVeil = null;
         }
         
         if (this.frostGraphics && this.frostGraphics.scene) {
+            this.frostGraphics.setVisible(false);
             this.frostGraphics.destroy();
+            this.frostGraphics = null;
         }
+        
+        // Reset the completionVeilRemoved flag
+        this.completionVeilRemoved = false;
         
         // Use our new method to create a completion veil that matches the chibi shape
         this.createCompletionVeil();
@@ -3912,6 +4053,25 @@
 
     createCompletionVeil() {
         try {
+            // First ensure any existing completion veil is fully cleaned up
+            if (this.completionVeil) {
+                if (this.veilContainer) {
+                    this.veilContainer.destroy(true);
+                    this.veilContainer = null;
+                } else if (this.completionVeil.scene) {
+                    this.completionVeil.destroy();
+                }
+                this.completionVeil = null;
+            }
+            
+            if (this.frostGraphics && this.frostGraphics.scene) {
+                this.frostGraphics.destroy();
+                this.frostGraphics = null;
+            }
+            
+            // Reset the removal flag
+            this.completionVeilRemoved = false;
+            
             // Get the chibi image dimensions - no scaling
             const imageWidth = this.chibiImage.width;
             const imageHeight = this.chibiImage.height;
@@ -3949,10 +4109,10 @@
             this.frostGraphics = frostGraphics;
             
             // Block size for the veil - smaller size for more precise shape
-            const blockSize = 10;
+            const blockSize = 10; // Keeping original block size of 10
             
             // Alpha threshold - lower value to include more semi-transparent pixels
-            const alphaThreshold = 50; // Lower threshold to catch edge pixels
+            const alphaThreshold = 50; // Keeping original alpha threshold of 50
             
             // Create veil blocks that match the chibi image shape
             const rows = Math.ceil(imageHeight / blockSize);
@@ -4017,7 +4177,7 @@
             }
             
             // Second pass: Add padding around detected pixels to ensure edges are covered
-            const paddingAmount = 1; // How many blocks of padding to add
+            const paddingAmount = 1; // Original padding value (1) restored
             
             // Create a copy of the grid before adding padding
             const originalGrid = veilGrid.map(row => [...row]);
@@ -5258,11 +5418,26 @@
         const victoryKey = `victoryBackground${this.currentLevel}`;
         console.log(`Victory ${victoryKey}: ${this.textures.exists(victoryKey) ? 'LOADED' : 'MISSING'}`);
         
+        // Check voice assets
+        let voiceFilesLoaded = 0;
+        this.voiceMessages.forEach(message => {
+            const audioKey = `voice_${message}`;
+            const isLoaded = this.cache.audio.exists(audioKey);
+            if (isLoaded) {
+                voiceFilesLoaded++;
+            }
+            console.log(`Voice ${audioKey}: ${isLoaded ? 'LOADED' : 'MISSING'}`);
+        });
+        console.log(`Voice files: ${voiceFilesLoaded}/${this.voiceMessages.length} loaded`);
+        
         // List all loaded textures for reference
         console.log('All loaded textures:', Object.keys(this.textures.list)
             .filter(key => key !== '__DEFAULT' && key !== '__MISSING')
             .join(', '));
         
+        console.log('All loaded audio:', Object.keys(this.cache.audio.entries.entries)
+            .join(', '));
+            
         console.log('-------------------------------');
     }
 
@@ -5421,7 +5596,7 @@
 
     // Update UI to reflect the current bomb selection
     updateBombSelection() {
-        // Call the more comprehensive updateBombUI method
+        // Simply call the more comprehensive updateBombUI method
         this.updateBombUI();
     }
 
@@ -5618,46 +5793,7 @@
         }
     }
 
-    // Helper method to toggle debug visuals on/off
-    toggleDebugVisuals() {
-        // Toggle the debug mode flag
-        this.debugMode = !this.debugMode;
-        console.log(`Debug visuals ${this.debugMode ? 'enabled' : 'disabled'}`);
-        
-        // Clean up existing debug visuals if any
-        if (this.debugVisuals && this.debugVisuals.length > 0) {
-            this.debugVisuals.forEach(visual => {
-                if (visual && typeof visual.destroy === 'function') {
-                    visual.destroy();
-                }
-            });
-            this.debugVisuals = [];
-        }
-        
-        // If debug mode is now on, recreate the debug visuals
-        if (this.debugMode && this.boundaryBlocks && this.boundaryBlocks.length > 0) {
-            this.debugVisuals = this.debugVisuals || [];
-            
-            // Create debug visuals for each boundary
-            this.boundaryBlocks.forEach(border => {
-                if (border && border.body) {
-                    const bounds = border.body.bounds;
-                    const width = bounds.max.x - bounds.min.x;
-                    const height = bounds.max.y - bounds.min.y;
-                    const x = bounds.min.x + width/2;
-                    const y = bounds.min.y + height/2;
-                    
-                    const debugVisual = this.add.rectangle(x, y, width, height, 0x00ff00, 0.3);
-                    debugVisual.setDepth(10); // Above everything
-                    debugVisual.setStrokeStyle(1, 0xffffff);
-                    
-                    this.debugVisuals.push(debugVisual);
-                }
-            });
-            
-            console.log(`Created ${this.debugVisuals.length} debug visuals for reflective borders`);
-        }
-    }
+    
     
     // Helper method to check if a bomb is currently active
     isBombActive() {
@@ -5770,5 +5906,261 @@
         
         // Draw trajectory prediction
         this.drawTrajectory(bombX, bombY, forceX, forceY);
+    }
+
+    // New method to play a random congratulatory voice message
+    playRandomVoiceMessage() {
+        try {
+            // Don't play if audio is disabled or the level is complete/game over
+            if (this.isLevelComplete || this.isGameOver || 
+                (this.audioManager && !this.audioManager.soundsEnabled)) {
+                return;
+            }
+            
+            // Get a random voice message from the array
+            const randomIndex = Math.floor(Math.random() * this.voiceMessages.length);
+            const messageKey = this.voiceMessages[randomIndex];
+            const audioKey = `voice_${messageKey}`;
+            
+            console.log(`Attempting to play voice message: ${messageKey}`);
+            
+            // Display the congratulatory text on screen
+            this.displayCongratulationText(messageKey);
+            
+            // Local file path - ensure it's correctly formatted for direct access
+            const filePath = `assets/audio/voice/${messageKey}.mp3`;
+            
+            // First try to play using Phaser's audio system
+            if (this.sound && this.cache.audio.exists(audioKey)) {
+                try {
+                    const voiceSound = this.sound.add(audioKey, { volume: 0.7 });
+                    voiceSound.play();
+                    
+                    // Debug log
+                    if (this.debugMode) {
+                        console.log(`Voice message played successfully: ${messageKey}`);
+                    }
+                    
+                    return true; // Successfully played
+                } catch (e) {
+                    console.error(`Error playing cached voice clip ${audioKey}:`, e);
+                    // Fall through to alternatives
+                }
+            }
+            
+            // Alternative 1: Try loading directly from file if not cached
+            console.warn(`Voice audio not found in cache: ${audioKey}, attempting direct playback`);
+            
+            try {
+                // Create an Audio element directly (browser API)
+                const audio = new Audio(filePath);
+                audio.volume = 0.7;
+                
+                // Log the full URL for debugging
+                console.log(`Loading audio directly from: ${audio.src}`);
+                
+                // Play the audio with proper error handling
+                audio.play()
+                    .then(() => {
+                        console.log(`Direct audio playback started for: ${messageKey}`);
+                    })
+                    .catch(err => {
+                        console.error(`Direct audio play failed: ${err.message}`);
+                        
+                        // Alternative 2: Try one more approach for Edge/IE
+                        if (window.navigator && window.navigator.msSaveOrOpenBlob) {
+                            console.log("Trying IE/Edge specific method");
+                            const sound = document.createElement('audio');
+                            sound.src = filePath;
+                            sound.volume = 0.7;
+                            sound.play();
+                        }
+                    });
+                
+                return true; // Attempted to play
+            } catch (directErr) {
+                console.error("All audio play attempts failed:", directErr);
+                return false;
+            }
+        } catch (error) {
+            console.error("Error in playRandomVoiceMessage:", error);
+            return false;
+        }
+    }
+
+    // New method to display congratulatory text messages on screen
+    displayCongratulationText(message) {
+        try {
+            // Remove any existing congratulation text
+            if (this.congratulationText && this.congratulationText.scene) {
+                this.congratulationText.destroy();
+            }
+            
+            // Format the message text - capitalize and add exclamation if needed
+            let displayText = message.replace(/_/g, ' ');
+            displayText = displayText.charAt(0).toUpperCase() + displayText.slice(1);
+            if (!displayText.endsWith('!')) {
+                displayText += '!';
+            }
+            
+            // Create text in the center of the screen
+            this.congratulationText = this.add.text(
+                this.cameras.main.width / 2,
+                this.cameras.main.height / 2 - 100,
+                displayText,
+                {
+                    fontFamily: 'Arial',
+                    fontSize: '48px',
+                    fontStyle: 'bold',
+                    color: '#FFD700', // Gold color
+                    stroke: '#000000',
+                    strokeThickness: 6,
+                    shadow: {
+                        offsetX: 3,
+                        offsetY: 3,
+                        color: '#000',
+                        blur: 5,
+                        fill: true
+                    }
+                }
+            );
+            
+            // Center the text
+            this.congratulationText.setOrigin(0.5);
+            
+            // Set high depth to appear above game elements
+            this.congratulationText.setDepth(this.UI_DEPTH + 5);
+            
+            // Add animations to make the text pop and fade
+            this.tweens.add({
+                targets: this.congratulationText,
+                scale: { from: 0.5, to: 1.2 },
+                duration: 200,
+                ease: 'Back.easeOut',
+                yoyo: true,
+                hold: 100,
+                onComplete: () => {
+                    // After the pop animation, let it stay for a moment then fade out
+                    this.tweens.add({
+                        targets: this.congratulationText,
+                        alpha: { from: 1, to: 0 },
+                        y: '-=50', // Float up while fading
+                        duration: 1000,
+                        delay: 800,
+                        ease: 'Power2',
+                        onComplete: () => {
+                            // Clean up after the animation
+                            if (this.congratulationText && this.congratulationText.scene) {
+                                this.congratulationText.destroy();
+                                this.congratulationText = null;
+                            }
+                        }
+                    });
+                }
+            });
+            
+            if (this.debugMode) {
+                console.log(`Displayed congratulation text: "${displayText}"`);
+            }
+            
+        } catch (error) {
+            console.error("Error displaying congratulation text:", error);
+        }
+    }
+
+    // Method to display special text effects for large percentage clears
+    displaySpecialClearText(percentageCleared) {
+        try {
+            // Only trigger for very significant clears (20% or more at once)
+            if (percentageCleared < 20) return;
+            
+            // Choose message based on clear size
+            let message;
+            let fontSize = 52;
+            let color = '#FFD700'; // Default gold
+            
+            if (percentageCleared >= 40) {
+                message = 'SPECTACULAR!!!';
+                fontSize = 64;
+                color = '#FF00FF'; // Magenta for biggest clears
+            } else if (percentageCleared >= 30) {
+                message = 'AMAZING!!!';
+                fontSize = 60;
+                color = '#00FFFF'; // Cyan for big clears
+            } else {
+                message = 'WOW!!';
+                fontSize = 56;
+                color = '#FFFF00'; // Yellow for good clears
+            }
+            
+            // Create special text that appears above regular congratulation text
+            const specialText = this.add.text(
+                this.cameras.main.width / 2,
+                this.cameras.main.height / 2 - 180,
+                message,
+                {
+                    fontFamily: 'Arial',
+                    fontSize: `${fontSize}px`,
+                    fontStyle: 'bold',
+                    color: color,
+                    stroke: '#000000',
+                    strokeThickness: 8,
+                    shadow: {
+                        offsetX: 4,
+                        offsetY: 4,
+                        color: '#000',
+                        blur: 8,
+                        fill: true
+                    }
+                }
+            );
+            
+            // Center the text
+            specialText.setOrigin(0.5);
+            
+            // Set highest depth to appear above everything
+            specialText.setDepth(this.UI_DEPTH + 10);
+            
+            // Add more dramatic animation for the special text
+            this.tweens.add({
+                targets: specialText,
+                scale: { from: 0.3, to: 1.5 },
+                duration: 350,
+                ease: 'Back.easeOut',
+                yoyo: true,
+                hold: 200,
+                onComplete: () => {
+                    // Add wiggle effect
+                    this.tweens.add({
+                        targets: specialText,
+                        angle: { from: -5, to: 5 },
+                        duration: 150,
+                        yoyo: true,
+                        repeat: 3,
+                        onComplete: () => {
+                            // Then fade out
+                            this.tweens.add({
+                                targets: specialText,
+                                alpha: { from: 1, to: 0 },
+                                y: '-=80',
+                                scale: { from: 1, to: 1.8 },
+                                duration: 800,
+                                delay: 300,
+                                ease: 'Power2',
+                                onComplete: () => {
+                                    specialText.destroy();
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+            
+            // Add a camera shake effect for extra impact
+            this.cameras.main.shake(300, 0.01);
+            
+        } catch (error) {
+            console.error("Error displaying special clear text:", error);
+        }
     }
 }

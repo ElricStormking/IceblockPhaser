@@ -2,9 +2,9 @@
     constructor() {
         super({ key: 'GameScene' });
         
-        // Reposition slingshot to middle left side of screen
-        this.SLINGSHOT_X = 300; // Keep at 300 (positioned on left side)
-        this.SLINGSHOT_Y = 540; // Changed from 800 to 540 (middle height of 1080px screen)
+        // Reposition bow to middle left side of screen
+        this.BOW_X = 300; // Keep at 300 (positioned on left side)
+        this.BOW_Y = 540; // Changed from 800 to 540 (middle height of 1080px screen)
         this.MAX_DRAG_DISTANCE = 200;
         this.SHOT_POWER = 0.13; // Increased shot power (from 0.07)
         this.MAX_SHOTS = 20; // Doubled from 10 for testing
@@ -806,17 +806,58 @@
         }
     }
 
-    createSlingshot() {
+    createBow() {
         try {
-            this.slingshot = this.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y, 'slingshot');
-            this.slingshot.setOrigin(0.5, 0.5); // Changed from 0.9 to 0.5 for center alignment
-            this.slingshot.setDepth(10); // Above all game elements but below UI
+            // Create a silver bow shape using graphics
+            const bowGraphics = this.add.graphics();
             
-            // Add elastic line for slingshot
+            // Silver color with slight gradient
+            const silverColor = 0xC0C0C0;
+            const darkSilver = 0x909090;
+            
+            // Create bow arc
+            bowGraphics.lineStyle(5, silverColor, 1);
+            bowGraphics.beginPath();
+            // Draw a semicircle arc for the bow
+            bowGraphics.arc(0, 0, 40, Phaser.Math.DegToRad(150), Phaser.Math.DegToRad(390), false);
+            bowGraphics.strokePath();
+            
+            // Add some details to make it look like a bow
+            bowGraphics.lineStyle(3, darkSilver, 1);
+            // Bow grip (middle part)
+            bowGraphics.fillStyle(darkSilver, 1);
+            bowGraphics.fillRect(-5, -10, 10, 20);
+            
+            // Generate a texture from the graphics
+            bowGraphics.generateTexture('bow', 100, 100);
+            bowGraphics.clear();
+            
+            // Create the bow image using the generated texture
+            this.bow = this.add.image(this.BOW_X, this.BOW_Y, 'bow');
+            this.bow.setOrigin(0.5, 0.5);
+            this.bow.setDepth(10); // Above all game elements but below UI
+            
+            // Add bowstring (elastic line)
             this.elasticLine = this.add.graphics();
-            this.elasticLine.setDepth(11); // Above slingshot
+            this.elasticLine.setDepth(11); // Above bow
+            
+            // Draw the default bowstring (a straight line when not pulled)
+            this.updateBowstring();
+            
         } catch (error) {
-            console.error("Error in createSlingshot:", error);
+            console.error("Error in createBow:", error);
+        }
+    }
+    
+    // Helper method to update the bowstring appearance
+    updateBowstring() {
+        if (this.elasticLine) {
+            this.elasticLine.clear();
+            this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
+            this.elasticLine.beginPath();
+            this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+            this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
+            this.elasticLine.stroke();
         }
     }
 
@@ -824,7 +865,7 @@
         console.log("Creating bomb");
         
         // Create inactive bomb at slingshot position - simple settings
-        this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 'bomb', null);
+        this.bomb = this.matter.add.image(this.BOW_X, this.BOW_Y - 20, 'bomb', null);
         
         this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
         this.bomb.setStatic(true);
@@ -874,8 +915,8 @@
                         // This creates a more responsive feel
                         if (!this.game.device.os.desktop) {
                             // Calculate initial direction from slingshot
-                            const dx = this.SLINGSHOT_X - pointer.x;
-                            const dy = this.SLINGSHOT_Y - 30 - pointer.y;
+                            const dx = this.BOW_X - pointer.x;
+                            const dy = this.BOW_Y - 30 - pointer.y;
                             const distance = Math.min(
                                 this.MAX_DRAG_DISTANCE,
                                 Math.sqrt(dx * dx + dy * dy)
@@ -885,8 +926,8 @@
                             const angle = Math.atan2(dy, dx);
                             
                             // Calculate bomb position
-                            const bombX = this.SLINGSHOT_X - distance * Math.cos(angle);
-                            const bombY = (this.SLINGSHOT_Y - 30) - distance * Math.sin(angle);
+                            const bombX = this.BOW_X - distance * Math.cos(angle);
+                            const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
                             
                             // Update bomb position immediately
                             this.bomb.setPosition(bombX, bombY);
@@ -894,12 +935,12 @@
                             // Draw elastic line immediately
                             if (this.elasticLine) {
                                 this.elasticLine.clear();
-                                this.elasticLine.lineStyle(3, 0xFF0000);
+                                this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
                                 this.elasticLine.beginPath();
-                                this.elasticLine.moveTo(this.SLINGSHOT_X - 10, this.SLINGSHOT_Y - 30);
-                                this.elasticLine.lineTo(bombX, bombY);
-                                this.elasticLine.moveTo(this.SLINGSHOT_X + 10, this.SLINGSHOT_Y - 30);
-                                this.elasticLine.lineTo(bombX, bombY);
+                                // Draw from top of bow through the bomb position and to bottom of bow
+                                this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+                                this.elasticLine.lineTo(bombX, bombY); // Bomb position
+                                this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
                                 this.elasticLine.stroke();
                             }
                         }
@@ -960,8 +1001,8 @@
                     }
                     
                     // Calculate angle and distance from slingshot
-                    const dx = this.SLINGSHOT_X - pointer.x;
-                    const dy = this.SLINGSHOT_Y - 30 - pointer.y;
+                    const dx = this.BOW_X - pointer.x;
+                    const dy = this.BOW_Y - 30 - pointer.y;
                     const distance = Math.min(
                         this.MAX_DRAG_DISTANCE,
                         Math.sqrt(dx * dx + dy * dy)
@@ -971,8 +1012,8 @@
                     const angle = Math.atan2(dy, dx);
                     
                     // Calculate bomb position
-                    const bombX = this.SLINGSHOT_X - distance * Math.cos(angle);
-                    const bombY = (this.SLINGSHOT_Y - 30) - distance * Math.sin(angle);
+                    const bombX = this.BOW_X - distance * Math.cos(angle);
+                    const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
                     
                     // Update bomb position - keep it static while dragging
                     this.bomb.setPosition(bombX, bombY);
@@ -995,12 +1036,12 @@
                     // Draw elastic line
                     if (this.elasticLine) {
                         this.elasticLine.clear();
-                        this.elasticLine.lineStyle(3, 0xFF0000);
+                        this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
                         this.elasticLine.beginPath();
-                        this.elasticLine.moveTo(this.SLINGSHOT_X - 10, this.SLINGSHOT_Y - 30);
-                        this.elasticLine.lineTo(bombX, bombY);
-                        this.elasticLine.moveTo(this.SLINGSHOT_X + 10, this.SLINGSHOT_Y - 30);
-                        this.elasticLine.lineTo(bombX, bombY);
+                        // Draw from top of bow through the bomb position and to bottom of bow
+                        this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+                        this.elasticLine.lineTo(bombX, bombY); // Bomb position
+                        this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
                         this.elasticLine.stroke();
                     }
                     
@@ -1039,9 +1080,9 @@
                         this.touchIndicator = null;
                     }
                     
-                    // Calculate force based on distance from slingshot
-                    const dx = this.SLINGSHOT_X - this.bomb.x;
-                    const dy = (this.SLINGSHOT_Y - 30) - this.bomb.y;
+                    // Calculate force based on distance from bow
+                    const dx = this.BOW_X - this.bomb.x;
+                    const dy = (this.BOW_Y - 30) - this.bomb.y;
                     
                     // Check if the drag distance is significant enough to launch
                     const dragDistance = Math.sqrt(dx * dx + dy * dy);
@@ -1051,7 +1092,7 @@
                             console.log('Drag distance too small, not launching:', dragDistance);
                         }
                         // Reset position
-                        this.bomb.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                        this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
                         this.isAiming = false;
                         
                         // Clear visual elements
@@ -1098,6 +1139,9 @@
                             window.navigator.vibrate(100); // 100ms vibration on launch
                         }
                         
+                        // Restore the bowstring to its resting position
+                        this.updateBowstring();
+                        
                         // Decrement bomb count
                         this.decrementBombCount(bombType);
                         
@@ -1137,15 +1181,14 @@
                 if (this.isAiming && this.bomb) {
                     // Reset the bomb position if touch is cancelled
                     this.isAiming = false;
-                    this.bomb.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                    this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
                     
                     // Clear visuals
                     if (this.elasticLine) this.elasticLine.clear();
                     if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
-                    if (this.touchIndicator) {
-                        this.touchIndicator.destroy();
-                        this.touchIndicator = null;
-                    }
+                    
+                    // Restore the bowstring to its resting position
+                    this.updateBowstring();
                 }
             });
             
@@ -1946,7 +1989,7 @@
         console.log("Creating bomb");
         
         // Create inactive bomb at slingshot position - simple settings
-        this.bomb = this.matter.add.image(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, this.currentBombType);
+        this.bomb = this.matter.add.image(this.BOW_X, this.BOW_Y - 20, this.currentBombType);
         
         this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
         this.bomb.setStatic(true);
@@ -1975,10 +2018,10 @@
         
         // Create a highlight pulse effect for the bomb
         if (!this.bombHighlight) {
-            this.bombHighlight = this.add.circle(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20, 35, 0xffff00, 0.3);
+            this.bombHighlight = this.add.circle(this.BOW_X, this.BOW_Y - 20, 35, 0xffff00, 0.3);
             this.bombHighlight.setDepth(11); // Below the bomb
         } else {
-            this.bombHighlight.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+            this.bombHighlight.setPosition(this.BOW_X, this.BOW_Y - 20);
             this.bombHighlight.setAlpha(0.3);
             this.bombHighlight.setScale(1);
         }
@@ -2256,8 +2299,8 @@
                     Math.abs(this.bomb.body.velocity.x) < 0.1 && 
                     Math.abs(this.bomb.body.velocity.y) < 0.1) {
                     console.log("Force didn't work, trying velocity directly");
-                    const dx = this.SLINGSHOT_X - x;
-                    const dy = (this.SLINGSHOT_Y - 30) - y;
+                    const dx = this.BOW_X - x;
+                    const dy = (this.BOW_Y - 30) - y;
                     this.bomb.setVelocity(dx * 0.2, dy * 0.2);
                 }
             });
@@ -3044,11 +3087,11 @@
             if (this.isAiming) {
                 // If the user is already aiming, don't reposition
             } else {
-                this.bomb.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
                 
                 // Update the highlight position
                 if (this.bombHighlight) {
-                    this.bombHighlight.setPosition(this.SLINGSHOT_X, this.SLINGSHOT_Y - 20);
+                    this.bombHighlight.setPosition(this.BOW_X, this.BOW_Y - 20);
                 }
             }
         }
@@ -5634,8 +5677,8 @@
         // Create reflective borders around the game boundary
         this.createBoundaryBouncyBlocks();
         
-        // Create slingshot
-        this.createSlingshot();
+        // Create bow
+        this.createBow();
         this.createTargets();
         
         // Create UI before resetting bomb
@@ -5644,7 +5687,7 @@
         // Reset bomb and prepare for first shot
         this.resetBomb();
         
-        // Setup input handlers - use original setupInput method for sling functionality
+        // Setup input handlers - use original setupInput method for bow functionality
         this.setupInput();
         
         // Setup global failsafe timer to detect stuck game states
@@ -5806,8 +5849,8 @@
         
         try {
             // Calculate angle and distance from slingshot
-            const dx = this.SLINGSHOT_X - pointer.x;
-            const dy = this.SLINGSHOT_Y - 30 - pointer.y;
+            const dx = this.BOW_X - pointer.x;
+            const dy = this.BOW_Y - 30 - pointer.y;
             
             // Minimum drag distance required to fire (prevents accidental taps)
             const minDragDistance = 20;
@@ -5869,8 +5912,8 @@
     // Helper method to draw trajectory based on pointer position
     drawTrajectoryFromPointer(pointer) {
         // Calculate angle and distance from slingshot
-        const dx = this.SLINGSHOT_X - pointer.x;
-        const dy = this.SLINGSHOT_Y - 30 - pointer.y;
+        const dx = this.BOW_X - pointer.x;
+        const dy = this.BOW_Y - 30 - pointer.y;
         const distance = Math.min(
             this.MAX_DRAG_DISTANCE,
             Math.sqrt(dx * dx + dy * dy)
@@ -5880,8 +5923,8 @@
         const angle = Math.atan2(dy, dx);
         
         // Calculate bomb position
-        const bombX = this.SLINGSHOT_X - distance * Math.cos(angle);
-        const bombY = (this.SLINGSHOT_Y - 30) - distance * Math.sin(angle);
+        const bombX = this.BOW_X - distance * Math.cos(angle);
+        const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
         
         // Update bomb position if it exists
         if (this.bomb) {
@@ -5891,12 +5934,12 @@
         // Draw elastic line
         if (this.elasticLine) {
             this.elasticLine.clear();
-            this.elasticLine.lineStyle(3, 0xFF0000);
+            this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
             this.elasticLine.beginPath();
-            this.elasticLine.moveTo(this.SLINGSHOT_X - 10, this.SLINGSHOT_Y - 30);
-            this.elasticLine.lineTo(bombX, bombY);
-            this.elasticLine.moveTo(this.SLINGSHOT_X + 10, this.SLINGSHOT_Y - 30);
-            this.elasticLine.lineTo(bombX, bombY);
+            // Draw from top of bow through the bomb position and to bottom of bow
+            this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+            this.elasticLine.lineTo(bombX, bombY); // Bomb position
+            this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
             this.elasticLine.stroke();
         }
         

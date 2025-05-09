@@ -138,6 +138,9 @@
             // Clear any existing resources to prevent memory leaks
             this.clearResources();
             
+            // Initialize the BombLauncher module
+            this.bombLauncher = new BombLauncher(this);
+            
             // Setup the game level first
             this.setupGame();
             
@@ -152,6 +155,9 @@
             this.initializeLevelManager().then(() => {
                 // Now that we have the level manager initialized, setup bombs
                 this.setupBombs();
+                
+                // Create initial bomb at the slingshot
+                this.bombLauncher.createBomb(this.currentBombType || 'bomb');
                 
                 // Update bomb UI to reflect initial counts
                 this.updateBombUI();
@@ -885,7 +891,7 @@
             // Pointer down event - works for both mouse and touch
             this.input.on('pointerdown', (pointer) => {
                 try {
-                    if (this.shotsRemaining <= 0 || !this.bomb || !this.bomb.visible) return;
+                    if (this.shotsRemaining <= 0 || !this.bombLauncher || !this.bombLauncher.bomb || !this.bombLauncher.bomb.visible) return;
                     
                     // Immediately log touch events for debugging
                     if (this.debugMode) {
@@ -899,55 +905,33 @@
                     const touchRadius = this.game.device.os.desktop ? 80 : 120;
                     const distance = Phaser.Math.Distance.Between(
                         pointer.x, pointer.y, 
-                        this.bomb.x, this.bomb.y
+                        this.bombLauncher.bomb.x, this.bombLauncher.bomb.y
                     );
                     
                     if (distance < touchRadius) {
                         // Provide immediate visual feedback
-                        this.bomb.setTint(0xffff00);
+                        this.bombLauncher.bomb.setTint(0xffff00);
                         
                         this.isAiming = true;
                         
-                        // Keep the bomb static during aiming - we'll manually position it
-                        this.bomb.setStatic(true);
+                        // Immediately start drawing the trajectory
+                        if (pointer && pointer.x !== undefined && pointer.y !== undefined) {
+                            this.bombLauncher.drawTrajectoryFromPointer(pointer);
+                        }
                         
                         // For touch devices, immediately move the bomb to the touch position
                         // This creates a more responsive feel
                         if (!this.game.device.os.desktop) {
-                            // Calculate initial direction from slingshot
-                            const dx = this.BOW_X - pointer.x;
-                            const dy = this.BOW_Y - 30 - pointer.y;
-                            const distance = Math.min(
-                                this.MAX_DRAG_DISTANCE,
-                                Math.sqrt(dx * dx + dy * dy)
-                            );
-                            
-                            // Calculate angle
-                            const angle = Math.atan2(dy, dx);
-                            
-                            // Calculate bomb position
-                            const bombX = this.BOW_X - distance * Math.cos(angle);
-                            const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
-                            
-                            // Update bomb position immediately
-                            this.bomb.setPosition(bombX, bombY);
-                            
-                            // Draw elastic line immediately
-                            if (this.elasticLine) {
-                                this.elasticLine.clear();
-                                this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
-                                this.elasticLine.beginPath();
-                                // Draw from top of bow through the bomb position and to bottom of bow
-                                this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
-                                this.elasticLine.lineTo(bombX, bombY); // Bomb position
-                                this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
-                                this.elasticLine.stroke();
+                            // Validate pointer before passing to BombLauncher
+                            if (pointer && pointer.x !== undefined && pointer.y !== undefined) {
+                                // Update bomb position through the BombLauncher
+                                this.bombLauncher.drawTrajectoryFromPointer(pointer);
                             }
                         }
                         
                         // Mobile touch feedback - pulse the bomb when touched
                         this.tweens.add({
-                            targets: this.bomb,
+                            targets: this.bombLauncher.bomb,
                             scale: { from: 1, to: 1.2 },
                             duration: 100,
                             yoyo: true,
@@ -956,32 +940,10 @@
                         
                         // Add touch indicator text for mobile users
                         if (this.touchIndicator) this.touchIndicator.destroy();
-                        this.touchIndicator = this.add.text(
-                            this.bomb.x,
-                            this.bomb.y - 60,
-                            "Hold & Drag to Aim",
-                            {
-                                font: '16px Arial',
-                                fill: '#ffffff',
-                                stroke: '#000000',
-                                strokeThickness: 3
-                            }
-                        ).setOrigin(0.5).setDepth(20);
                         
-                        // Fade out the indicator after a short delay
-                        this.tweens.add({
-                            targets: this.touchIndicator,
-                            alpha: 0,
-                            delay: 1000,
-                            duration: 500,
-                            onComplete: () => {
-                                if (this.touchIndicator) this.touchIndicator.destroy();
-                            }
-                        });
-                        
-                        if (this.debugMode && this.debugText) {
-                            console.log('Aiming started');
-                            this.debugText.setText(`Aiming started at ${pointer.x},${pointer.y} | distance: ${distance}`);
+                        // Add mobile-specific instructions
+                        if (!this.game.device.os.desktop) {
+                            this.addMobilePulseHint();
                         }
                     }
                 } catch (error) {
@@ -989,219 +951,123 @@
                 }
             });
             
-            // Pointer move event - works for both mouse and touch drag
+            // Handle pointer movement for aiming
             this.input.on('pointermove', (pointer) => {
                 try {
-                    if (!this.isAiming || !this.bomb) return;
+                    if (!this.isAiming || !this.bombLauncher || !this.bombLauncher.bomb) return;
                     
-                    // On all mobile devices, make sure the pointer is down
-                    // This fixes the issue where dragging doesn't work with press and hold
-                    if (!pointer.isDown && !this.game.device.os.desktop) {
-                        return; // Skip if touch isn't active on mobile devices
+                    // Validate pointer before passing to BombLauncher
+                    if (pointer && pointer.x !== undefined && pointer.y !== undefined) {
+                        // Force clear any existing trajectory and elastic line first
+                        if (this.bombLauncher.trajectoryGraphics) {
+                            this.bombLauncher.trajectoryGraphics.clear();
+                        }
+                        if (this.bombLauncher.elasticLine) {
+                            this.bombLauncher.elasticLine.clear();
+                        }
+                        
+                        // Use drawTrajectoryFromPointer for consistent drawing
+                        this.bombLauncher.drawTrajectoryFromPointer(pointer);
                     }
-                    
-                    // Calculate angle and distance from slingshot
-                    const dx = this.BOW_X - pointer.x;
-                    const dy = this.BOW_Y - 30 - pointer.y;
-                    const distance = Math.min(
-                        this.MAX_DRAG_DISTANCE,
-                        Math.sqrt(dx * dx + dy * dy)
-                    );
-                    
-                    // Calculate angle
-                    const angle = Math.atan2(dy, dx);
-                    
-                    // Calculate bomb position
-                    const bombX = this.BOW_X - distance * Math.cos(angle);
-                    const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
-                    
-                    // Update bomb position - keep it static while dragging
-                    this.bomb.setPosition(bombX, bombY);
-                    
-                    // Add debug info for touch events if in debug mode
-                    if (this.debugMode && this.debugText) {
-                        this.debugText.setText(
-                            `Aiming: pos=${bombX.toFixed(1)},${bombY.toFixed(1)} | ` +
-                            `dx=${dx.toFixed(1)},dy=${dy.toFixed(1)} | ` +
-                            `pointer.isDown=${pointer.isDown} | ` +
-                            `mobile=${!this.game.device.os.desktop}`
-                        );
-                    }
-                    
-                    // Update touch indicator position if it exists
-                    if (this.touchIndicator && this.touchIndicator.active) {
-                        this.touchIndicator.setPosition(bombX, bombY - 60);
-                    }
-                    
-                    // Draw elastic line
-                    if (this.elasticLine) {
-                        this.elasticLine.clear();
-                        this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
-                        this.elasticLine.beginPath();
-                        // Draw from top of bow through the bomb position and to bottom of bow
-                        this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
-                        this.elasticLine.lineTo(bombX, bombY); // Bomb position
-                        this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
-                        this.elasticLine.stroke();
-                    }
-                    
-                    // Calculate velocity based on drag distance and angle
-                    const forceX = dx * this.SHOT_POWER * 0.01;
-                    const forceY = dy * this.SHOT_POWER * 0.01;
-                    
-                    // Draw trajectory prediction
-                    this.drawTrajectory(bombX, bombY, forceX, forceY);
                 } catch (error) {
                     console.error("Error in pointermove handler:", error);
                 }
             });
             
-            // Pointer up event - works for both mouse and touch release
+            // Handle pointer up for launching
             this.input.on('pointerup', (pointer) => {
                 try {
-                    if (!this.isAiming || !this.bomb) return;
+                    if (!this.isAiming || !this.bombLauncher) return;
                     
-                    // Immediately log touch release for debugging
-                    if (this.debugMode) {
-                        console.log('Pointer up detected:', 
-                            pointer.x, pointer.y, 
-                            'isMobile:', !this.game.device.os.desktop,
-                            'downTime:', pointer.downTime,
-                            'upTime:', pointer.upTime,
-                            'type:', pointer.type);
-                    }
-                    
-                    // Clear any tint applied during pointerdown
-                    this.bomb.clearTint();
-                    
-                    // Remove touch indicator if it exists
+                    // Clear any indicators
                     if (this.touchIndicator) {
                         this.touchIndicator.destroy();
                         this.touchIndicator = null;
                     }
                     
-                    // Calculate force based on distance from bow
-                    const dx = this.BOW_X - this.bomb.x;
-                    const dy = (this.BOW_Y - 30) - this.bomb.y;
+                    // Reset bomb tint
+                    if (this.bombLauncher.bomb) {
+                        this.bombLauncher.bomb.clearTint();
+                    }
                     
-                    // Check if the drag distance is significant enough to launch
-                    const dragDistance = Math.sqrt(dx * dx + dy * dy);
-                    if (dragDistance < 10 && !this.game.device.os.desktop) {
-                        // If barely moved on mobile, don't launch - just consider it a tap
-                        if (this.debugMode) {
-                            console.log('Drag distance too small, not launching:', dragDistance);
-                        }
-                        // Reset position
-                        this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
+                    // Validate pointer exists before accessing it
+                    if (!pointer || pointer.x === undefined || pointer.y === undefined) {
+                        console.warn("Invalid pointer in pointerup event");
                         this.isAiming = false;
-                        
-                        // Clear visual elements
-                        if (this.elasticLine) this.elasticLine.clear();
-                        if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
                         return;
                     }
                     
-                    // Scale by shot power
-                    const forceX = dx * this.SHOT_POWER * 0.01;
-                    const forceY = dy * this.SHOT_POWER * 0.01;
-                    
-                    if (this.debugMode && this.debugText) {
-                        console.log('Launching bomb with force:', forceX, forceY, 'distance:', dragDistance);
-                        this.debugText.setText(`Launch: force=${forceX.toFixed(3)},${forceY.toFixed(3)} | distance=${dragDistance.toFixed(1)}`);
-                    }
-                    
-                    // Clear elastic line
-                    if (this.elasticLine) this.elasticLine.clear();
-                    
-                    // Clear trajectory
-                    if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
-                    
                     try {
-                        // Store current bomb position and type
-                        const bombX = this.bomb.x;
-                        const bombY = this.bomb.y;
-                        const bombType = this.currentBombType;
-                        
-                        // Cancel any previous miss timer
-                        if (this.bombMissTimer) {
-                            this.bombMissTimer.remove();
-                            this.bombMissTimer = null;
-                        }
-                        
-                        // Remove the old static bomb
-                        this.bomb.destroy();
-                        
-                        // Create a new dynamic bomb at the same position
-                        this.createDynamicBomb(bombX, bombY, bombType, forceX, forceY);
-                        
-                        // Add haptic feedback for mobile devices if supported
-                        if (window.navigator && window.navigator.vibrate) {
-                            window.navigator.vibrate(100); // 100ms vibration on launch
-                        }
-                        
-                        // Restore the bowstring to its resting position
-                        this.updateBowstring();
-                        
-                        // Decrement bomb count
-                        this.decrementBombCount(bombType);
-                        
-                        // Decrement shots
-                        this.shotsRemaining--;
-                        this.events.emit('updateShots', this.shotsRemaining);
-                        
-                        // Reset aiming flag
-                        this.isAiming = false;
-                        
-                        // Set timeout to create a new bomb if shots remain
-                        this.time.delayedCall(3000, () => {
-                            if (this.shotsRemaining > 0) {
-                                if (!this.bomb) {
-                                    this.resetBomb();
-                                }
-                            } else {
-                                // Check level completion or game over if no shots remain
-                                this.checkLevelCompletion();
+                        // Launch the bomb using the BombLauncher
+                        if (this.bombLauncher.launchBomb(pointer)) {
+                            // Bomb was successfully launched
+                            
+                            // Add haptic feedback for mobile devices if supported
+                            if (window.navigator && window.navigator.vibrate) {
+                                window.navigator.vibrate(100); // 100ms vibration on launch
                             }
-                        });
-                    }
-                    catch (error) {
+                            
+                            // Decrement bomb count
+                            this.decrementBombCount(this.currentBombType);
+                            
+                            // Decrement shots
+                            this.shotsRemaining--;
+                            this.events.emit('updateShots', this.shotsRemaining);
+                            
+                            // Reset aiming flag
+                            this.isAiming = false;
+                            
+                            // Set timeout to create a new bomb if shots remain
+                            this.time.delayedCall(3000, () => {
+                                if (this.shotsRemaining > 0) {
+                                    if (!this.bombLauncher.bomb) {
+                                        this.bombLauncher.createBomb(this.currentBombType || 'bomb');
+                                    }
+                                } else {
+                                    // Check level completion or game over if no shots remain
+                                    this.checkLevelCompletion();
+                                }
+                            });
+                        } else {
+                            // Bomb launch failed, reset aiming state
+                            this.isAiming = false;
+                        }
+                    } catch (error) {
                         console.error("Error launching bomb:", error);
                         if (this.debugText) this.debugText.setText(`ERROR: ${error.message}`);
                         
                         // Try to recover
-                        this.resetBomb();
+                        this.isAiming = false;
+                        if (this.bombLauncher) {
+                            this.bombLauncher.createBomb(this.currentBombType || 'bomb');
+                        }
                     }
                 } catch (error) {
                     console.error("Error in pointerup handler:", error);
                 }
             });
-
+            
             // Add specific handling for touch cancel events (important for mobile)
             this.input.on('pointercancel', () => {
-                if (this.isAiming && this.bomb) {
+                if (this.isAiming && this.bombLauncher && this.bombLauncher.bomb) {
                     // Reset the bomb position if touch is cancelled
                     this.isAiming = false;
-                    this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
                     
-                    // Clear visuals
-                    if (this.elasticLine) this.elasticLine.clear();
-                    if (this.trajectoryGraphics) this.trajectoryGraphics.clear();
+                    // Create a new bomb at the slingshot position
+                    this.bombLauncher.createBomb(this.currentBombType || 'bomb');
                     
-                    // Restore the bowstring to its resting position
-                    this.updateBowstring();
+                    // Clear any indicators
+                    if (this.touchIndicator) {
+                        this.touchIndicator.destroy();
+                        this.touchIndicator = null;
+                    }
                 }
             });
             
-            // Add a pulsing hint for mobile users when a new bomb is loaded
-            this.time.delayedCall(500, () => {
-                this.addMobilePulseHint();
-            });
-            
-            // Add a keyboard shortcut for toggling debug visuals (D key)
-            this.input.keyboard.on('keydown-D', () => {
-                this.toggleDebugVisuals();
-            });
-            
+            // Log if input setup is complete
+            if (this.debugMode) {
+                console.log("Input setup complete");
+            }
         } catch (error) {
             console.error("Error in setupInput:", error);
         }
@@ -1301,84 +1167,75 @@
                 
                 // Process in a try-catch block to avoid complete game failure on collision errors
                 try {
+                    // Get the active bomb - either from bombLauncher (preferred) or direct reference
+                    const activeBomb = (this.bombLauncher && this.bombLauncher.bomb) ? this.bombLauncher.bomb : this.bomb;
+                    
                     // Cache bomb info before any processing in case the bomb gets destroyed
                     let cachedBombInfo = null;
-                    if (this.bomb && this.bomb.scene) {
+                    if (activeBomb && activeBomb.scene) {
                         cachedBombInfo = {
-                            x: this.bomb.x,
-                            y: this.bomb.y,
-                            type: this.bomb.bombType || this.BOMB_TYPES.BLAST,
-                            velocity: this.bomb.body?.velocity ? 
-                                {x: this.bomb.body.velocity.x, y: this.bomb.body.velocity.y} : 
+                            x: activeBomb.x,
+                            y: activeBomb.y,
+                            type: activeBomb.bombType || this.BOMB_TYPES.BLAST,
+                            velocity: activeBomb.body?.velocity ? 
+                                {x: activeBomb.body.velocity.x, y: activeBomb.body.velocity.y} : 
                                 {x: 0, y: 0}
                         };
                     }
                     
                     // Skip all collision processing if the bomb is still at the slingshot
-                    if (this.bomb && this.bomb.isAtSlingshot) {
+                    if (activeBomb && activeBomb.isAtSlingshot) {
                         console.log("Ignoring collision for bomb still at slingshot");
                         return;
                     }
                     
                     // Skip collision processing if the bomb has already exploded
-                    if (this.bomb && this.bomb.hasExploded) {
+                    if (activeBomb && activeBomb.hasExploded) {
                         console.log("Ignoring collision for already exploded bomb");
                         return;
                     }
                     
                     // Skip collision processing if no active bomb exists
-                    if (!this.bomb || !this.bomb.active || !this.bomb.body) {
+                    if (!activeBomb || !activeBomb.active || !activeBomb.body) {
                         console.log("No active bomb to process collisions for");
                         return;
                     }
 
                     // Process each collision pair
-                for (let i = 0; i < pairs.length; i++) {
-                    try {
-                        const bodyA = pairs[i].bodyA;
-                        const bodyB = pairs[i].bodyB;
-                        
-                        if (!bodyA || !bodyB) continue;
+                    for (let i = 0; i < pairs.length; i++) {
+                        try {
+                            const bodyA = pairs[i].bodyA;
+                            const bodyB = pairs[i].bodyB;
                             
+                            if (!bodyA || !bodyB) continue;
+                                
                             // Skip this collision if either body is null or undefined
                             if (!bodyA.gameObject && !bodyA.label) continue;
                             if (!bodyB.gameObject && !bodyB.label) continue;
-                        
-                        // Find the bomb and block objects from the collision
-                        let bombBody, blockBody;
-                        
-                        if (bodyA.gameObject === this.bomb) {
-                            bombBody = bodyA;
-                            blockBody = bodyB;
-                        } else if (bodyB.gameObject === this.bomb) {
-                            bombBody = bodyB;
-                            blockBody = bodyA;
-                        } else {
-                            // Neither body is the bomb, so skip this pair
-                            continue;
-                        }
                             
-                            // Double safety check: Make sure bomb still exists and hasn't been destroyed
-                            if (!this.bomb || !this.bomb.scene) {
-                                if (cachedBombInfo && hasExploded) {
-                                    // We already exploded but still have cached info - continue safely
-                                    continue;
-                                } else {
-                                    console.log("Bomb no longer exists during collision handling");
-                                    continue;
-                                }
-                            }
+                            // Find the bomb and block objects from the collision
+                            let bombBody, blockBody;
                             
-                            // Safety check: If the bomb already exploded, skip further processing
-                            if (this.bomb.hasExploded) {
-                                console.log("Bomb already exploded, skipping additional collision handling");
+                            if (bodyA.gameObject === activeBomb) {
+                                bombBody = bodyA;
+                                blockBody = bodyB;
+                            } else if (bodyB.gameObject === activeBomb) {
+                                bombBody = bodyB;
+                                blockBody = bodyA;
+                            } else {
+                                // Neither body is the bomb, so skip this pair
                                 continue;
                             }
+
+                            // Capture the current bomb position for explosion effects
+                            const bombX = activeBomb.x;
+                            const bombY = activeBomb.y;
+                            const bombType = activeBomb.bombType || this.BOMB_TYPES.BLAST;
                             
                             // Special handling for reflective border - these don't have gameObjects
                             if (!blockBody.gameObject && blockBody.label === 'reflectiveBorder') {
                                 // Only bounce if we have a valid bomb
-                                if (this.bomb && this.bomb.active) {
+                                if (activeBomb && activeBomb.active) {
                                     // Create boundary collision with reflective properties
                                     const borderBlock = { 
                                         body: blockBody, 
@@ -1389,34 +1246,34 @@
                                     console.log("Reflective border collision detected", {
                                         borderX: borderBlock.x,
                                         borderY: borderBlock.y,
-                                        bombX: this.bomb.x,
-                                        bombY: this.bomb.y
+                                        bombX: activeBomb.x,
+                                        bombY: activeBomb.y
                                     });
                                     
                                     // Handle reflection through handleBouncyBlock
-                                    this.handleBouncyBlock(borderBlock, this.bomb);
+                                    this.handleBouncyBlock(borderBlock, activeBomb);
                                     bombReflected = true;
                                     
                                     // Track bounce for ricochet bombs
-                                    if (this.bomb && this.bomb.bombType === this.BOMB_TYPES.RICOCHET) {
-                                        this.bomb.isRicochet = true;
-                                        this.bomb.lastBounceTime = Date.now();
-                                        this.bomb.lastBounceX = this.bomb.x;
-                                        this.bomb.lastBounceY = this.bomb.y;
+                                    if (activeBomb && activeBomb.bombType === this.BOMB_TYPES.RICOCHET) {
+                                        activeBomb.isRicochet = true;
+                                        activeBomb.lastBounceTime = Date.now();
+                                        activeBomb.lastBounceX = activeBomb.x;
+                                        activeBomb.lastBounceY = activeBomb.y;
                                     }
                                     
                                     continue; // Skip normal block handling
                                 }
-                        }
-                        
-                        // Make sure blockBody has a gameObject
+                            }
+                            
+                            // Make sure blockBody has a gameObject
                             if (!blockBody || !blockBody.gameObject) {
-                            continue;
-                        }
-                        
-                        // Check if the other object is an ice block
-                        const block = blockBody.gameObject;
-                        
+                                continue;
+                            }
+                            
+                            // Check if the other object is an ice block
+                            const block = blockBody.gameObject;
+                            
                             // Make sure block is still valid and active
                             if (!block || !block.scene) {
                                 console.log("Block no longer exists during collision");
@@ -1425,185 +1282,317 @@
                             
                             // Check if it's a valid ice block - additional safeguards for null checks
                             if (block && block.isActive && this.iceBlocks && this.iceBlocks.includes(block)) {
-                            // Mark that the bomb has hit an ice block
-                            if (this.bomb) {
-                                this.bomb.hasHitIceBlock = true;
-                            }
-                            
-                            // Check if it's a bouncy block
-                            if (block.blockType === 'bouncy') {
-                                // Handle bounce logic except for sticky bombs
-                                const bombType = this.bomb ? (this.bomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
+                                // Mark that the bomb has hit an ice block
+                                if (activeBomb) {
+                                    activeBomb.hasHitIceBlock = true;
+                                    console.log("Bomb has hit an ice block, marked as hasHitIceBlock=true");
+                                }
                                 
-                                if (bombType !== this.BOMB_TYPES.STICKY) {
+                                // Check if it's a bouncy block
+                                if (block.blockType === 'bouncy') {
+                                    // Handle bounce logic except for sticky bombs
+                                    const bombType = activeBomb ? (activeBomb.bombType || this.BOMB_TYPES.BLAST) : this.BOMB_TYPES.BLAST;
+                                    
+                                    if (bombType !== this.BOMB_TYPES.STICKY) {
                                         // Check that bomb still exists before handling bounce
-                                        if (this.bomb && this.bomb.body) {
-                                    this.handleBouncyBlock(block, this.bomb);
-                                    bombReflected = true;
+                                        if (activeBomb && activeBomb.body) {
+                                            this.handleBouncyBlock(block, activeBomb);
+                                            bombReflected = true;
                                             
                                             // Track bounce for ricochet bombs
-                                            if (this.bomb && this.bomb.bombType === this.BOMB_TYPES.RICOCHET) {
-                                                this.bomb.isRicochet = true;
-                                                this.bomb.lastBounceTime = Date.now();
-                                                this.bomb.lastBounceX = this.bomb.x;
-                                                this.bomb.lastBounceY = this.bomb.y;
+                                            if (activeBomb && activeBomb.bombType === this.BOMB_TYPES.RICOCHET) {
+                                                activeBomb.isRicochet = true;
+                                                activeBomb.lastBounceTime = Date.now();
+                                                activeBomb.lastBounceX = activeBomb.x;
+                                                activeBomb.lastBounceY = activeBomb.y;
                                             }
                                         }
                                         
                                         continue; // Skip normal bomb behavior
-                            }
-                        }
-                        
-                        // Only proceed with normal bomb handling if not reflected
-                        if (!bombReflected) {
-                                    // IMPORTANT: Store positions BEFORE any handling that might destroy the bomb
-                                    const bombX = cachedBombInfo ? cachedBombInfo.x : (this.bomb ? this.bomb.x : 0);
-                                    const bombY = cachedBombInfo ? cachedBombInfo.y : (this.bomb ? this.bomb.y : 0);
-                                    let bombType = this.BOMB_TYPES.BLAST; // Default fallback
-                                    
-                                    // Get the bomb type - with safety check
-                                    if (this.bomb) {
-                                        bombType = this.bomb.bombType || this.BOMB_TYPES.BLAST;
-                                    } else if (cachedBombInfo) {
-                                        bombType = cachedBombInfo.type;
                                     }
-                            
-                            // Handle different bomb types
-                            if (!hasExploded && !bombStuck) {
-                                        // Mark the bomb as exploded to prevent double explosions
-                                        if (this.bomb) {
-                                            this.bomb.hasExploded = true;
-                                        }
-                                        
-                                        try {
-                                switch(bombType) {
-                                    case this.BOMB_TYPES.BLAST:
-                                        // Standard explosion with radius damage
+                                }
+                                
+                                // Handle dynamite blocks if we have a blast or shatterer bomb
+                                if (block.blockType === 'dynamite' && 
+                                    (bombType === this.BOMB_TYPES.BLAST || bombType === this.BOMB_TYPES.SHATTERER)) {
+                                    // Dynamite blocks create additional explosions when hit
+                                    this.createDynamiteDestroyEffect(block.x, block.y);
+                                    
+                                    // Destroy additional blocks in radius
+                                    this.destroyBlocksInRadius(block.x, block.y, 200);
+                                    
+                                    // Make sure to destroy the dynamite block itself
+                                    this.destroyIceBlock(block);
+                                    
+                                    // Need to also process normal bomb behavior, so we don't continue here
+                                }
+                                
+                                // Handle different bomb types
+                                if (!hasExploded && !bombStuck) {
+                                    // Mark the bomb as exploded to prevent double explosions
+                                    if (activeBomb) {
+                                        activeBomb.hasExploded = true;
+                                    }
+                                    
+                                    try {
+                                        switch(bombType) {
+                                            case this.BOMB_TYPES.BLAST:
+                                                // Standard explosion with radius damage
+                                                this.bombUtils.handleBlastBomb(bombX, bombY);
+                                                hasExploded = true;
+                                                break;
+                                                
+                                            case this.BOMB_TYPES.PIERCER:
+                                                // Get velocity before accessing the bomb's properties
+                                                let velocity = {x: 0, y: 0};
+                                                if (activeBomb && activeBomb.body) {
+                                                    velocity = activeBomb.body.velocity;
+                                                } else if (cachedBombInfo) {
+                                                    velocity = cachedBombInfo.velocity;
+                                                }
+                                                // Creates a line of destruction in its direction
+                                                this.bombUtils.handlePiercerBomb(bombX, bombY, velocity);
+                                                hasExploded = true;
+                                                break;
+                                                
+                                            case this.BOMB_TYPES.CLUSTER:
+                                                // Creates multiple smaller explosions
+                                                this.bombUtils.handleClusterBomb(bombX, bombY);
+                                                hasExploded = true;
+                                                break;
+                                                
+                                            case this.BOMB_TYPES.STICKY:
+                                                // Sticks to a block and explodes after delay
+                                                if (block && block.isActive && this.iceBlocks.includes(block)) {
+                                                    // Handle sticky behavior
+                                                    if (this.bombUtils && this.bombUtils.handleStickyBomb) {
+                                                        this.bombUtils.handleStickyBomb(bombX, bombY, block);
+                                                    } else {
+                                                        // Direct method call if not using BombUtils
+                                                        this.handleStickyBomb(bombX, bombY, block);
+                                                    }
+                                                    bombStuck = true;
+                                                    
+                                                    // IMPORTANT: Do NOT mark as exploded for sticky bombs
+                                                    // They need to remain until triggered by another bomb
+                                                    if (activeBomb) {
+                                                        activeBomb.hasExploded = false;
+                                                        activeBomb.isSticky = true;
+                                                    }
+                                                    
+                                                    // Log successful sticky
+                                                    console.log("Sticky bomb attached to block and waiting for trigger");
+                                                    
+                                                    // Schedule creation of a new bomb after a delay
+                                                    this.time.delayedCall(1500, () => {
+                                                        const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+                                                        if (this.shotsRemaining > 0 && noBombAvailable) {
+                                                            console.log("Creating new bomb after placing sticky bomb (from collision handler)");
+                                                            this.resetBomb();
+                                                        }
+                                                    });
+                                                } else {
+                                                    // If not sticking to a valid target, just explode
+                                                    if (this.bombUtils && this.bombUtils.handleBlastBomb) {
+                                                        this.bombUtils.handleBlastBomb(bombX, bombY);
+                                                    } else {
+                                                        this.handleBlastBomb(bombX, bombY);
+                                                    }
+                                                    hasExploded = true;
+                                                    
+                                                    // Mark the bomb as exploded
+                                                    if (activeBomb) {
+                                                        activeBomb.hasExploded = true;
+                                                    }
+                                                }
+                                                break;
+                                                
+                                            case this.BOMB_TYPES.SHATTERER:
+                                                // Creates a powerful blast that's effective against tough blocks
+                                                this.bombUtils.handleShattererBomb(bombX, bombY);
+                                                hasExploded = true;
+                                                break;
+                                                            
+                                            case this.BOMB_TYPES.DRILLER:
+                                                // Handle the driller bomb specially if it collides with a block
+                                                try {
+                                                    console.log("Driller bomb collision detected");
+                                                    
+                                                    // Store velocity before doing anything else
+                                                    let velocityX = 0;
+                                                    let velocityY = 0;
+                                                    
+                                                    if (activeBomb && activeBomb.body && activeBomb.body.velocity) {
+                                                        velocityX = activeBomb.body.velocity.x;
+                                                        velocityY = activeBomb.body.velocity.y;
+                                                        // Store velocity on the bomb object for later use
+                                                        activeBomb.storedVelocityX = velocityX;
+                                                        activeBomb.storedVelocityY = velocityY;
+                                                        
+                                                        console.log(`Stored driller velocity: ${velocityX}, ${velocityY}`);
+                                                    } else if (cachedBombInfo && cachedBombInfo.velocity) {
+                                                        velocityX = cachedBombInfo.velocity.x;
+                                                        velocityY = cachedBombInfo.velocity.y;
+                                                        
+                                                        console.log(`Using cached velocity for driller: ${velocityX}, ${velocityY}`);
+                                                    }
+                                                    
+                                                    console.log(`Driller bomb collision with velocity: ${velocityX}, ${velocityY}`);
+                                                    
+                                                    // IMPORTANT: Mark the bomb as a driller before processing 
+                                                    // to prevent destruction in the cleanup phase
+                                                    if (activeBomb) {
+                                                        activeBomb.isDriller = true;
+                                                        activeBomb.hasExploded = false;
+                                                        console.log("Driller bomb - not destroying as it needs to drill");
+                                                    }
+                                                    
+                                                    // Process the driller bomb with the stored velocity
+                                                    let drillerBomb = null;
+                                                    if (this.bombUtils && this.bombUtils.handleDrillerBomb) {
+                                                        console.log("Using BombUtils.handleDrillerBomb");
+                                                        drillerBomb = this.bombUtils.handleDrillerBomb(bombX, bombY, block, velocityX, velocityY);
+                                                    } else {
+                                                        console.log("Using GameScene.handleDrillerBomb directly");
+                                                        drillerBomb = this.handleDrillerBomb(bombX, bombY, block);
+                                                    }
+                                                    
+                                                    // Make sure we have a reference to the driller bomb
+                                                    if (!this.activeDrillerBombs) {
+                                                        this.activeDrillerBombs = [];
+                                                    }
+                                                    
+                                                    // Only add if we don't already have this bomb
+                                                    if (drillerBomb && !this.activeDrillerBombs.includes(drillerBomb)) {
+                                                        this.activeDrillerBombs.push(drillerBomb);
+                                                        console.log("Added driller bomb to activeDrillerBombs array");
+                                                    }
+                                                    
+                                                    bombStuck = true; // Mark as stuck rather than exploded
+                                                    
+                                                    // Don't mark as exploded for driller bombs
+                                                    if (activeBomb) {
+                                                        activeBomb.hasExploded = false;
+                                                    }
+                                                } catch (error) {
+                                                    console.error("Error handling driller bomb:", error);
+                                                    // Fallback to blast bomb if driller fails
                                                     this.bombUtils.handleBlastBomb(bombX, bombY);
-                                        hasExploded = true;
-                                        break;
-                                        
-                                    case this.BOMB_TYPES.PIERCER:
-                                                    // Get velocity before accessing the bomb's properties
+                                                    hasExploded = true;
+                                                }
+                                                break;
+                                                        
+                                            case this.BOMB_TYPES.RICOCHET:
+                                                // Handle ricochet bomb - doesn't explode on contact, just bounces
+                                                if (this.bombUtils && this.bombUtils.handleRicochetBomb) {
+                                                    // Get velocity before accessing bomb properties
                                                     let velocity = {x: 0, y: 0};
-                                                    if (this.bomb && this.bomb.body) {
-                                                        velocity = this.bomb.body.velocity;
+                                                    if (activeBomb && activeBomb.body) {
+                                                        velocity = activeBomb.body.velocity;
                                                     } else if (cachedBombInfo) {
                                                         velocity = cachedBombInfo.velocity;
                                                     }
-                                        // Creates a line of destruction in its direction
-                                                    this.bombUtils.handlePiercerBomb(bombX, bombY, velocity);
-                                        hasExploded = true;
-                                        break;
-                                        
-                                    case this.BOMB_TYPES.CLUSTER:
-                                        // Creates multiple smaller explosions
-                                                    this.bombUtils.handleClusterBomb(bombX, bombY);
-                                        hasExploded = true;
-                                        break;
-                                        
-                                    case this.BOMB_TYPES.STICKY:
-                                        // Sticks to a block and explodes after delay
-                                        if (block && block.isActive && this.iceBlocks.includes(block)) {
-                                            // Handle sticky behavior
-                                                        this.bombUtils.handleStickyBomb(bombX, bombY, block);
-                                            bombStuck = true;
-                                        } else {
-                                            // If not sticking to a valid target, just explode
-                                                        this.bombUtils.handleBlastBomb(bombX, bombY);
-                                            hasExploded = true;
-                                        }
-                                        break;
-                                        
-                                    case this.BOMB_TYPES.SHATTERER:
-                                        // Creates a powerful blast that's effective against tough blocks
-                                                    this.bombUtils.handleShattererBomb(bombX, bombY);
-                                        hasExploded = true;
-                                        break;
                                                     
-                                    case this.BOMB_TYPES.DRILLER:
-                                        // Handle the driller bomb specially if it collides with a block
-                                                    this.handleDrillerBomb(bombX, bombY, block);
-                                        hasExploded = true;
-                                        break;
-                                                
-                                                case this.BOMB_TYPES.RICOCHET:
-                                                    // Handle ricochet bomb - doesn't explode on contact, just bounces
-                                                    if (this.bombUtils && this.bombUtils.handleRicochetBomb) {
-                                                        // Get velocity before accessing bomb properties
-                                                        let velocity = {x: 0, y: 0};
-                                                        if (this.bomb && this.bomb.body) {
-                                                            velocity = this.bomb.body.velocity;
-                                                        } else if (cachedBombInfo) {
-                                                            velocity = cachedBombInfo.velocity;
-                                                        }
-                                                        
-                                                        // We don't mark hasExploded as true for ricochet bombs since they continue bouncing
-                                                        // But we do need to fix the hasExploded flag we set above
-                                                        if (this.bomb) {
-                                                            this.bomb.hasExploded = false;
-                                                        }
-                                                        
-                                                        // We don't return/cleanup after handleRicochetBomb since it doesn't destroy the bomb
-                                                        this.bombUtils.handleRicochetBomb(bombX, bombY, block, velocity);
-                                                    } else {
-                                                        // Fallback to blast bomb if handler not available
-                                                        console.warn("Ricochet bomb handler not available, using blast bomb");
-                                                        this.bombUtils.handleBlastBomb(bombX, bombY);
-                                                        hasExploded = true;
+                                                    // We don't mark hasExploded as true for ricochet bombs since they continue bouncing
+                                                    // But we do need to fix the hasExploded flag we set above
+                                                    if (activeBomb) {
+                                                        activeBomb.hasExploded = false;
                                                     }
-                                                    break;
                                                     
-                                                default:
-                                                    // Default fallback for unknown bomb types
+                                                    // We don't return/cleanup after handleRicochetBomb since it doesn't destroy the bomb
+                                                    this.bombUtils.handleRicochetBomb(bombX, bombY, block, velocity);
+                                                } else {
+                                                    // Fallback to blast bomb if handler not available
+                                                    console.warn("Ricochet bomb handler not available, using blast bomb");
                                                     this.bombUtils.handleBlastBomb(bombX, bombY);
                                                     hasExploded = true;
-                                                    break;
-                                            }
-                                        } catch (error) {
-                                            console.error("Error handling bomb type:", error);
-                                            
-                                            // Emergency recovery - make sure to nullify bomb reference
-                                            if (this.bomb) {
-                                                if (this.bomb.scene) {
-                                                    this.bomb.destroy();
                                                 }
-                                                this.bomb = null;
-                                            }
-                                            
-                                            // Force a reset to recover
-                                            this.time.delayedCall(1000, () => this.resetBomb());
-                                }
-                                
-                                // Destroy the bomb if it exploded (not if it's sticky and stuck)
-                                        // Also don't destroy ricochet bombs as they need to keep bouncing
-                                        if (hasExploded && this.bomb && bombType !== this.BOMB_TYPES.RICOCHET) {
-                                            // Clean up any countdown timers for ricochet bombs
-                                            if (this.bomb.countdownText && this.bomb.countdownText.scene) {
-                                                this.bomb.countdownText.destroy();
-                                                this.bomb.countdownText = null;
-                                            }
-                                            if (this.bomb.countdown) {
-                                                this.bomb.countdown.remove();
-                                                this.bomb.countdown = null;
-                                            }
-                                            
-                                            // Destroy the bomb
-                                    this.bomb.destroy();
-                                    this.bomb = null;
+                                                break;
+                                                            
+                                            default:
+                                                // Default fallback for unknown bomb types
+                                                this.bombUtils.handleBlastBomb(bombX, bombY);
+                                                hasExploded = true;
+                                                break;
                                         }
+                                    } catch (error) {
+                                        console.error("Error handling bomb type:", error);
+                                        
+                                        // Emergency recovery - make sure to nullify bomb references
+                                        if (activeBomb) {
+                                            if (activeBomb.scene) {
+                                                activeBomb.destroy();
+                                            }
+                                            
+                                            // Clean up both references
+                                            if (this.bombLauncher) {
+                                                this.bombLauncher.bomb = null;
+                                            }
+                                            this.bomb = null;
+                                        }
+                                        
+                                        // Force a reset to recover
+                                        this.time.delayedCall(1000, () => this.resetBomb());
+                                    }
+                                    
+                                    // Destroy the bomb if it exploded (not if it's sticky and stuck)
+                                    // Also don't destroy ricochet bombs as they need to keep bouncing
+                                    // Don't destroy driller bombs either
+                                    if (hasExploded && activeBomb && 
+                                        bombType !== this.BOMB_TYPES.RICOCHET && 
+                                        bombType !== this.BOMB_TYPES.STICKY &&
+                                        bombType !== this.BOMB_TYPES.DRILLER) {
+                                        // Clean up any countdown timers for ricochet bombs
+                                        if (activeBomb.countdownText && activeBomb.countdownText.scene) {
+                                            activeBomb.countdownText.destroy();
+                                            activeBomb.countdownText = null;
+                                        }
+                                        if (activeBomb.countdown) {
+                                            activeBomb.countdown.remove();
+                                            activeBomb.countdown = null;
+                                        }
+                                        
+                                        // Extra check to ensure we don't destroy special bombs
+                                        if (activeBomb.isSticky || activeBomb.isDriller) {
+                                            console.log(`Not destroying ${bombType} bomb - it's marked as special`);
+                                        } else {
+                                            // Destroy the bomb
+                                            activeBomb.destroy();
+                                            
+                                            // Clear both references
+                                            if (this.bombLauncher) {
+                                                this.bombLauncher.bomb = null;
+                                                this.bombLauncher.bombState.active = false;
+                                            }
+                                            this.bomb = null;
+                                        }
+                                    } else if (bombType === this.BOMB_TYPES.DRILLER || activeBomb && activeBomb.isDriller) {
+                                        console.log("Driller bomb - not destroying as it needs to drill");
+                                        // Ensure hasExploded is false for driller bombs
+                                        if (activeBomb) {
+                                            activeBomb.hasExploded = false;
+                                        }
+                                    } else if (bombType === this.BOMB_TYPES.STICKY || (activeBomb && activeBomb.isSticky)) {
+                                        console.log("Sticky bomb - not destroying as it needs to stay stuck until triggered");
+                                        // Ensure hasExploded is false for sticky bombs
+                                        if (activeBomb) {
+                                            activeBomb.hasExploded = false;
+                                            activeBomb.isSticky = true;
+                                        }
+                                    }
                                 }
                             }
+                        } catch (error) {
+                            console.error("Error processing collision pair:", error);
                         }
-                    } catch (error) {
-                        console.error("Error processing collision pair:", error);
-                    }
                     }
                     
                     // If the bomb exploded or got stuck, reset the bomb
                     if ((hasExploded || bombStuck) && this.shotsRemaining > 0) {
                         this.time.delayedCall(1000, () => {
-                            if (this.bomb === null) {
+                            // Check both references
+                            const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+                            if (noBombAvailable) {
                                 this.resetBomb();
                             }
                         });
@@ -1614,7 +1603,8 @@
                     
                     // Safety cleanup to prevent the game from getting stuck
                     this.time.delayedCall(1000, () => {
-                        if (this.shotsRemaining > 0 && !this.bomb) {
+                        const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+                        if (this.shotsRemaining > 0 && noBombAvailable) {
                             this.resetBomb();
                         }
                     });
@@ -1634,9 +1624,25 @@
         this.triggerStickyBomb(x, y, 150);
     }
     
-    handlePiercerBomb(x, y) {
+    handlePiercerBomb(x, y, providedVelocity) {
         // Piercer bomb creates a line of destruction in its travel direction
-        const velocity = this.bomb.body.velocity;
+        let velocity;
+        
+        // Handle the case where velocity is provided externally (for stopped bombs)
+        if (providedVelocity) {
+            velocity = providedVelocity;
+            console.log("Using provided velocity for piercer bomb:", velocity);
+        } 
+        // Try to get velocity from active bomb
+        else if (this.bomb && this.bomb.body && this.bomb.body.velocity) {
+            velocity = this.bomb.body.velocity;
+            console.log("Using current bomb velocity for piercer bomb:", velocity);
+        } 
+        // Fallback to default downward velocity
+        else {
+            console.log("No velocity available for piercer bomb, using default downward direction");
+            velocity = { x: 0, y: 1 };
+        }
         
         // Normalize velocity to get direction
         const magnitude = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
@@ -1943,122 +1949,46 @@
     }
 
     resetBomb() {
-        // Update bomb state tracking
-        this.bombState.lastResetTime = Date.now();
-        
-        // First ensure any existing bomb is properly destroyed
-        if (this.bomb) {
-            if (this.debugMode) {
-                console.log("Cleaning up existing bomb before reset:", this.bomb.x, this.bomb.y);
+        try {
+            console.log("resetBomb called, creating new bomb");
+            
+            // Check if BombLauncher is available
+            if (this.bombLauncher) {
+                // Use BombLauncher's createBomb method
+                console.log("Using BombLauncher to create new bomb of type:", this.currentBombType);
+                this.bombLauncher.createBomb(this.currentBombType);
+                
+                // Store reference to the bombLauncher's bomb for backward compatibility
+                this.bomb = this.bombLauncher.bomb;
+            } else {
+                // Legacy method - direct creation in GameScene
+                console.log("Legacy creation: Direct in GameScene");
+                
+                // Create inactive bomb at slingshot position
+                this.bomb = this.matter.add.image(this.BOW_X, this.BOW_Y - 20, this.currentBombType || 'blast_bomb');
+                
+                this.bomb.setCircle(30);
+                this.bomb.setStatic(true);
+                this.bomb.setVisible(true);
+                this.bomb.setDepth(12);
+                
+                // Set bomb size to 60x60
+                this.bomb.setDisplaySize(60, 60);
+                
+                // Create elastic line
+                this.updateBowstring();
             }
             
-            // Make sure to properly clean up the old bomb
-            if (this.bomb.scene) {
-                this.bomb.destroy();
-            }
-            this.bomb = null;
-        }
-        
-        // Cancel any pending bomb timers
-        if (this.bombMissTimer) {
-            this.bombMissTimer.remove();
-            this.bombMissTimer = null;
-        }
-        
-        // Add a fail-safe cleanup for any stuck bomb state
-        if (this.pendingReset) {
-            if (this.debugMode) {
-                console.log("Canceling pending reset - resolving stuck state");
-            }
-            clearTimeout(this.pendingReset);
-            this.pendingReset = null;
-        }
-        
-        // Reset bomb state tracking
-        this.bombState.pendingReset = null;
-        
-        // Make sure we have shots remaining, otherwise check completion
-        if (this.shotsRemaining <= 0) {
-            if (this.debugMode) {
-                console.log("No shots remaining, checking level completion instead of resetting");
-            }
-            this.checkLevelCompletion();
-            return;
-        }
-        
-        console.log("Creating bomb");
-        
-        // Create inactive bomb at slingshot position - simple settings
-        this.bomb = this.matter.add.image(this.BOW_X, this.BOW_Y - 20, this.currentBombType);
-        
-        this.bomb.setCircle(30); // Set physics circle radius to 30 (half of 60x60)
-        this.bomb.setStatic(true);
-        this.bomb.setVisible(true);
-        this.bomb.setDepth(12); // Above slingshot and elastic line
-        
-        // Set bomb size to 60x60 (reduced from 80x80)
-        this.bomb.setDisplaySize(60, 60);
-        
-        // Store bomb type for reference in collision handling
-        this.bomb.bombType = this.currentBombType;
-        
-        // IMPORTANT: Mark this bomb as not launched (static at slingshot)
-        this.bomb.isLaunched = false;
-        this.bomb.hasHitIceBlock = false;
-        
-        // Add safety flag to prevent premature explosion
-        this.bomb.isAtSlingshot = true;
-        
-        // Make it draggable
-        this.bomb.setInteractive();
-        this.input.setDraggable(this.bomb);
-        
-        // Update bomb state
-        this.bombState.active = true;
-        
-        // Create a highlight pulse effect for the bomb
-        if (!this.bombHighlight) {
-            this.bombHighlight = this.add.circle(this.BOW_X, this.BOW_Y - 20, 35, 0xffff00, 0.3);
-            this.bombHighlight.setDepth(11); // Below the bomb
-        } else {
-            this.bombHighlight.setPosition(this.BOW_X, this.BOW_Y - 20);
-            this.bombHighlight.setAlpha(0.3);
-            this.bombHighlight.setScale(1);
-        }
-        
-        // Mobile-specific visual indicator - add a pulse effect to show touchable area
-        if (!this.game.device.os.desktop) {
-            // Add pulsing effect to highlight the bomb for mobile users
-            this.tweens.add({
-                targets: this.bombHighlight,
-                alpha: { from: 0.3, to: 0.7 },
-                scale: { from: 1, to: 1.3 },
-                duration: 800,
-                yoyo: true,
-                repeat: 2,
-                onComplete: () => {
-                    if (this.bombHighlight) {
-                        this.bombHighlight.setAlpha(0.3);
-                        this.bombHighlight.setScale(1);
-                    }
-                }
-            });
-            
-            // Delay mobile hint to appear after the pulse animation
-            this.time.delayedCall(500, () => {
+            // Add mobile hint for touch devices
+            if (!this.game.device.os.desktop) {
                 this.addMobilePulseHint();
-            });
+            }
+            
+            console.log("New bomb created successfully:", this.bomb ? this.bomb.texture.key : "No bomb");
+            
+        } catch (error) {
+            console.error("Error in resetBomb:", error);
         }
-        
-        // Update the UI to show the current bomb type and shots remaining
-        this.updateBombUI();
-        
-        // Update debug
-        if (this.debugText) {
-            this.debugText.setText(`Bomb: ${this.currentBombType} | Shots: ${this.shotsRemaining} | Bomb exists: ${this.bomb ? 'yes' : 'no'}`);
-        }
-        
-        console.log("Bomb reset complete, new bomb created with type:", this.currentBombType);
     }
     
     updateUI() {
@@ -2156,6 +2086,7 @@
         
         // Mark as a launched bomb (not static at slingshot)
         this.bomb.isLaunched = true;
+        this.bomb.hasHitIceBlock = false;
         
         // Add special properties for Ricochet bombs
         if (bombType === this.BOMB_TYPES.RICOCHET) {
@@ -2231,7 +2162,6 @@
         
         // Track when the bomb was launched
         this.bomb.launchTime = this.time.now;
-        this.bomb.hasHitIceBlock = false;
         
         // Set up a timer to check for missed bombs after 15 seconds (increased from 8 seconds)
         this.bombMissTimer = this.time.delayedCall(15000, () => {
@@ -2365,6 +2295,15 @@
     setupInputHandlers() {
         console.log("Setting up input handlers");
         
+        // Check if input handlers are already set up to avoid duplicate handlers
+        if (this.inputHandlersSetup) {
+            console.log("Input handlers already set up, skipping");
+            return;
+        }
+        
+        // Mark input handlers as set up
+        this.inputHandlersSetup = true;
+        
         // Setup global input handlers here
         this.input.on('pointerdown', (pointer) => {
             // Only handle if bomb is reset and ready
@@ -2381,6 +2320,11 @@
                 // Add a subtle screen effect to indicate aiming has started
                 if (this.cameras && this.cameras.main) {
                     this.cameras.main.shake(100, 0.002);
+                }
+                
+                // If BombLauncher is available, update bomb position
+                if (this.bombLauncher && this.bombLauncher.bomb) {
+                    this.bombLauncher.drawTrajectoryFromPointer(pointer);
                 }
             }
         });
@@ -2414,6 +2358,11 @@
         // Add a keyboard shortcut for toggling debug visuals (D key)
         this.input.keyboard.on('keydown-D', () => {
             this.toggleDebugVisuals();
+            
+            // Also update BombLauncher debug mode if available
+            if (this.bombLauncher) {
+                this.bombLauncher.debugMode = this.debugMode;
+            }
         });
         
         console.log("Input handlers set up successfully");
@@ -2424,6 +2373,11 @@
         // Toggle the debug mode flag
         this.debugMode = !this.debugMode;
         console.log(`Debug visuals ${this.debugMode ? 'enabled' : 'disabled'}`);
+        
+        // Toggle debug mode in BombLauncher if available
+        if (this.bombLauncher && this.bombLauncher.toggleDebugMode) {
+            this.bombLauncher.toggleDebugMode(this.debugMode);
+        }
         
         // Clean up existing debug visuals if any
         if (this.debugVisuals && this.debugVisuals.length > 0) {
@@ -2628,163 +2582,229 @@
         this.events.emit('updatePercentage', this.revealPercentage);
     }
     
-    update() {
+    update(time, delta) {
         try {
-            // First check if game is still active
-            if (this.isLevelComplete || this.isGameOver) return;
+            // Handle game state
+            if (this.gameState) {
+                this.gameState.update(time, delta);
+            }
             
-            // Check if bomb exists and has valid properties to avoid errors
-            if (this.bomb && this.bomb.active && this.bomb.body) {
-                // Safety check to ensure bomb still exists in scene
-                if (!this.bomb.scene) {
-                    console.warn("Bomb no longer exists in scene - cleaning up references");
-                    this.bomb = null;
-                    return;
-                }
+            // Check for bombs that need auto-creation
+            const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+            if (noBombAvailable && this.shotsRemaining > 0) {
+                const hasActiveDrillers = this.activeDrillerBombs && this.activeDrillerBombs.some(bomb => bomb.isActive);
+                const hasActiveSticky = this.activeStickyBombs && this.activeStickyBombs.length > 0;
                 
-                // Don't do physics processing for bombs still at slingshot
-                if (this.bomb.isAtSlingshot) {
-                    return;
-                }
-                
-                // Update countdown text position for ricochet bombs
-                if (this.bomb.bombType === this.BOMB_TYPES.RICOCHET && 
-                    this.bomb.countdownText && 
-                    this.bomb.countdownText.scene) {
-                    this.bomb.countdownText.setPosition(this.bomb.x, this.bomb.y - 30);
-                }
-                
-                // Check if bomb is outside the world bounds
-                if (this.bomb.x < 0 || this.bomb.x > this.cameras.main.width ||
-                    this.bomb.y < 0 || this.bomb.y > this.cameras.main.height) {
+                // Check if we need to auto-create a bomb
+                // No drillers/sticky are currently creating their bombs, so it's safe to create one
+                if (!hasActiveDrillers && !this.isCreatingNewBomb) {
+                    // Log this condition when debugging launcher reset issues
+                    console.log("Auto-creating new bomb in update - no bomb available and no active drillers");
                     
-                    // Special handling for ricochet bombs - they bounce off world bounds
-                    if (this.bomb.bombType === this.BOMB_TYPES.RICOCHET && this.bomb.isRicochet) {
-                        try {
-                            // Keep ricochet bombs within world bounds and make them bounce
-                            const bounceMargin = 20; // Increased from 10 to reduce bounce frequency
-                            
-                            // Track last bounce time to avoid excessive bouncing
-                            const now = Date.now();
-                            if (!this.bomb.lastBounceTime) {
-                                this.bomb.lastBounceTime = 0;
-                            }
-                            
-                            // Only process bounce if enough time has passed (at least 250ms between bounces)
-                            const minBounceInterval = 250;
-                            const canBounce = (now - this.bomb.lastBounceTime) > minBounceInterval;
-                            
-                            // Check if we're far enough from the last bounce position
-                            if (!this.bomb.lastBounceX) {
-                                this.bomb.lastBounceX = -1000;
-                                this.bomb.lastBounceY = -1000;
-                            }
-                            
-                            // Calculate distance from last bounce
-                            const distFromLastBounce = Phaser.Math.Distance.Between(
-                                this.bomb.x, this.bomb.y, 
-                                this.bomb.lastBounceX, this.bomb.lastBounceY
-                            );
-                            
-                            // We need at least 50 pixels of distance between bounces
-                            const minBounceDistance = 50;
-                            
-                            // Track if bounce happened this frame
-                            let bouncedThisFrame = false;
-                            
-                            // Make sure bomb body and velocity exist before accessing
-                            if (!this.bomb.body || !this.bomb.body.velocity) {
-                                console.warn("Ricochet bomb missing body or velocity in update");
-                                return;
-                            }
-                            
-                            // Update the countdown text position if it exists
-                            if (this.bomb.countdownText && this.bomb.countdownText.scene) {
-                                this.bomb.countdownText.setPosition(this.bomb.x, this.bomb.y - 30);
-                            }
-                        } catch (error) {
-                            console.error("Error handling ricochet bomb in update:", error);
-                            // If there was an error in ricochet handling, destroy the bomb
-                            if (this.bomb && !this.bomb.hasExploded) {
-                                // Force the bomb to explode immediately to avoid continued errors
-                                if (this.bombUtils) {
-                                    this.bombUtils.explodeRicochetBomb(this.bomb);
-                                } else {
-                                    this.resetBomb();
-                                }
-                            }
-                            return;
+                    // Set a flag to prevent multiple resets
+                    this.isCreatingNewBomb = true;
+                    
+                    this.time.delayedCall(300, () => {
+                        // Double check if we still need to create a bomb
+                        const stillNoBomb = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+                        if (stillNoBomb && this.shotsRemaining > 0) {
+                            console.log("Calling resetBomb from update loop");
+                            this.resetBomb();
                         }
-                    } else {
-                    // Only log if debug mode is on
-                    if (this.debugMode) {
-                        console.log("Bomb outside world bounds, resetting.");
+                        this.isCreatingNewBomb = false;
+                    });
+                }
+            }
+            
+            // Handle active sticky bombs
+            if (this.activeStickyBombs && this.activeStickyBombs.length > 0) {
+                // Process all active sticky bombs to ensure effects follow their position
+                this.activeStickyBombs.forEach(bomb => {
+                    if (!bomb || !bomb.isActive) return;
+                    
+                    // Update particle emitter position if it exists
+                    if (bomb.emitter && bomb.emitter.manager && bomb.emitter.manager.scene) {
+                        bomb.emitter.setPosition(bomb.x, bomb.y);
                     }
                     
-                    // Create a small visual effect where the bomb exited
+                    // Update visual effect position if it exists
+                    if (bomb.visualEffect && bomb.visualEffect.scene) {
+                        bomb.visualEffect.setPosition(bomb.x, bomb.y);
+                    }
+                    
+                    // If the bomb has a sprite, update its position
+                    if (bomb.bombSprite && bomb.bombSprite.scene) {
+                        bomb.bombSprite.setPosition(bomb.x, bomb.y);
+                    }
+                });
+            }
+            
+            // Handle active driller bombs - ensure they continue drilling
+            if (this.activeDrillerBombs && this.activeDrillerBombs.length > 0) {
+                // Only log this periodically to avoid spamming
+                if (time % 5000 < 20) {
+                    console.log(`${this.activeDrillerBombs.length} active driller bombs`);
+                }
+                
+                // Process all active driller bombs
+                this.activeDrillerBombs.forEach(bomb => {
+                    if (!bomb || !bomb.isActive) return;
+                    
+                    // Update particle emitter position if it exists
+                    if (bomb.emitter && bomb.emitter.manager && bomb.emitter.manager.scene) {
+                        bomb.emitter.setPosition(bomb.x, bomb.y);
+                    }
+                    
+                    // Update driller effect position if it exists
+                    if (bomb.drillerEffect && bomb.drillerEffect.scene) {
+                        bomb.drillerEffect.setPosition(bomb.x, bomb.y);
+                    }
+                    
+                    // If the bomb has a sprite, update its position
+                    if (bomb.bombSprite && bomb.bombSprite.scene) {
+                        bomb.bombSprite.setPosition(bomb.x, bomb.y);
+                    }
+                    
+                    // Check if this is an old driller bomb (over 8 seconds) and hasn't been deactivated
+                    // This is a failsafe
+                    const now = Date.now();
+                    if (bomb.createdAt && (now - bomb.createdAt > 8000)) {
+                        console.warn(`Driller bomb has been active for over 8s - forcing completion`);
+                        bomb.isActive = false;
+                        
+                        // Stop the drill interval if it exists
+                        if (bomb.drillInterval) {
+                            bomb.drillInterval.remove();
+                            bomb.drillInterval = null;
+                        }
+                        
+                        // Create a final explosion
                         if (this.bombUtils) {
-                    this.bombUtils.createFizzleEffect(
-                        Phaser.Math.Clamp(this.bomb.x, 10, this.cameras.main.width - 10),
-                        Phaser.Math.Clamp(this.bomb.y, 10, this.cameras.main.height - 10)
-                    );
+                            this.bombUtils.createDrillerExplosion(bomb.x, bomb.y);
                         }
-                    
-                    // Auto-reset to allow the player to continue quickly
-                    this.resetBomb();
-                    return;
-                    }
-                }
-                
-                // Check if the bomb has nearly stopped moving in midair
-                if (this.bomb.body && this.bomb.body.velocity && !this.bomb.isAtSlingshot) {
-                    const velocityMagnitude = Math.sqrt(
-                        this.bomb.body.velocity.x * this.bomb.body.velocity.x + 
-                        this.bomb.body.velocity.y * this.bomb.body.velocity.y
-                    );
-                    
-                    // If the bomb's velocity is near zero and it hasn't hit an ice block
-                    if (velocityMagnitude < 0.5 && !this.bomb.hasHitIceBlock) {
-                        // Wait a short moment to confirm the bomb is truly stopped
-                        if (!this.bomb.stoppedTime) {
-                            this.bomb.stoppedTime = this.time.now;
-                        } else if (this.time.now - this.bomb.stoppedTime > 500) { // Wait 500ms to confirm it's stopped
-                            if (this.debugMode) {
-                                console.log("Bomb stopped moving in midair, exploding.");
+                        
+                        // Clear out any bomb references that might be preventing reset
+                        if (this.bomb === bomb.bombSprite) {
+                            this.bomb = null;
+                        }
+                        
+                        if (this.bombLauncher && this.bombLauncher.bomb === bomb.bombSprite) {
+                            this.bombLauncher.bomb = null;
+                            this.bombLauncher.bombState.active = false;
+                        }
+                        
+                        // Destroy blocks in the ending radius
+                        this.destroyBlocksInRadius(bomb.x, bomb.y, 180);
+                        
+                        // Clean up resources
+                        if (bomb.drillerEffect && bomb.drillerEffect.scene) {
+                            bomb.drillerEffect.destroy();
+                        }
+                        
+                        if (bomb.particles && bomb.particles.scene) {
+                            bomb.particles.destroy();
+                        }
+                        
+                        // Check for bomb reset
+                        this.time.delayedCall(500, () => {
+                            const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+                            if (this.shotsRemaining > 0 && noBombAvailable) {
+                                console.log("Creating new bomb from failsafe");
+                                this.resetBomb();
                             }
+                        });
+                    }
+                });
+                
+                // Clean up inactive driller bombs
+                this.activeDrillerBombs = this.activeDrillerBombs.filter(bomb => 
+                    bomb && bomb.isActive);
+            }
+            
+            // Check for bombs that miss everything
+            if (this.bombLauncher) {
+                this.bombLauncher.checkForMissedBombs();
+                
+                // Also check for bombs that have stopped moving without hitting anything
+                this.bombLauncher.checkForStoppedBombs();
+            }
+            
+            // Make UI elements follow the camera
+            this.updateUI();
+            
+            // Apply any game settings
+            if (this.applyGameSettings) {
+                this.applyGameSettings(delta);
+            }
+            
+            // Check for ricochet bomb timers
+            if (this.bombLauncher && this.bombLauncher.bomb && 
+                this.bombLauncher.bomb.texture && 
+                this.bombLauncher.bomb.texture.key === this.BOMB_TYPES.RICOCHET) {
+                
+                const bomb = this.bombLauncher.bomb;
+                
+                // Only process for active launched ricochet bombs
+                if (bomb.isRicochet && bomb.isLaunched && !bomb.hasExploded) {
+                    // Track time since last bounce
+                    const now = this.time.now;
+                    const timeSinceLastBounce = bomb.lastBounceTime ? (now - bomb.lastBounceTime) : 0;
+                    
+                    // If it's been a while since the last bounce (more than 3 seconds), explode the bomb
+                    if (timeSinceLastBounce > 3000) {
+                        if (this.bombUtils && this.bombUtils.explodeRicochetBomb) {
+                            this.bombUtils.explodeRicochetBomb(bomb);
+                        } else {
+                            // Fallback to exploding as a regular bomb
+                            this.handleBombExplosion(bomb.x, bomb.y, bomb.texture.key);
                             
-                            // Get the bomb's current position and type - store before possible destruction
-                            const bombInfo = {
-                                x: this.bomb.x,
-                                y: this.bomb.y,
-                                type: this.bomb.bombType || this.BOMB_TYPES.BLAST
-                            };
-                            
-                            // Handle explosion based on bomb type
-                            this.handleBombExplosion(bombInfo.x, bombInfo.y, bombInfo.type);
+                            // Destroy the bomb
+                            bomb.destroy();
+                            this.bombLauncher.bomb = null;
+                            this.bomb = null;
                         }
-                    } else {
-                        // Reset stopped time if the bomb is moving again
-                        this.bomb.stoppedTime = null;
+                    }
+                    
+                    // Create a trail effect for active ricochet bombs
+                    if (timeSinceLastBounce < 3000 && bomb.isRicochet) {
+                        // Add a trail effect every 100ms
+                        if (!bomb.lastTrailTime || (now - bomb.lastTrailTime) > 100) {
+                            bomb.lastTrailTime = now;
+                            
+                            if (this.bombUtils && this.bombUtils.createRicochetTrail) {
+                                this.bombUtils.createRicochetTrail(bomb);
+                            }
+                        }
                     }
                 }
             }
             
-            // Check for stuck game states
-            this.checkGameState();
-            
-        } catch (error) {
-            console.error("Error in update loop:", error);
-            // Attempt recovery by resetting the bomb
-            if (this.bomb && this.bomb.bombType === this.BOMB_TYPES.RICOCHET && !this.bomb.hasExploded) {
-                console.log("Attempting to recover from error by exploding ricochet bomb");
-                if (this.bombUtils) {
-                    this.bombUtils.explodeRicochetBomb(this.bomb);
-                } else {
-                    this.resetBomb();
+            // Add original game behavior for fps counter, etc.
+            if (this.debugMode && this.frameCounter !== undefined) {
+                this.frameCounter++;
+                
+                // Update FPS counter every second
+                if (time > this.lastFPSUpdate + 1000) {
+                    this.lastFPS = this.frameCounter;
+                    this.frameCounter = 0;
+                    this.lastFPSUpdate = time;
+                    
+                    if (this.debugText) {
+                        this.debugText.setText(`FPS: ${this.lastFPS} | Shots: ${this.shotsRemaining}`);
+                    }
                 }
-            } else {
-                // For other errors, just reset the bomb
-                this.resetBomb();
+            }
+        } catch (error) {
+            console.error("Error in update function:", error);
+            
+            // Ensure game doesn't get stuck due to an error
+            if (!this.failsafeTimer) {
+                this.failsafeTimer = this.time.delayedCall(2000, () => {
+                    this.failsafeTimer = null;
+                    if (this.checkGameState) {
+                        this.checkGameState();
+                    }
+                });
             }
         }
     }
@@ -3076,24 +3096,110 @@
     }
     
     selectBombType(bombType) {
-        this.currentBombType = bombType;
-        this.updateBombUI(); // Call updateBombUI instead of updateBombSelection
+        // Store previous bomb type before changing
+        const previousBombType = this.currentBombType;
         
-        // If there's a bomb on the slingshot, update its texture
-        if (this.bomb && this.bomb.body && this.bomb.body.isStatic) {
-            this.bomb.setTexture(this.currentBombType);
+        // Update current bomb type
+        this.currentBombType = bombType;
+        
+        // Add visual effect for type change
+        if (previousBombType !== bombType) {
+            // Add a small camera shake effect for feedback
+            if (this.cameras && this.cameras.main) {
+                this.cameras.main.shake(100, 0.003);
+            }
             
-            // Make sure the bomb is at the slingshot position
-            if (this.isAiming) {
-                // If the user is already aiming, don't reposition
-            } else {
-                this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
+            // Add flash effect for bomb switch
+            const flash = this.add.circle(this.BOW_X, this.BOW_Y - 20, 40, 0xffffff, 0.7);
+            flash.setDepth(50);
+            
+            // Animate the flash
+            this.tweens.add({
+                targets: flash,
+                alpha: 0,
+                scale: 2,
+                duration: 300,
+                onComplete: () => {
+                    flash.destroy();
+                }
+            });
+            
+            // Play switch sound if available
+            try {
+                this.sound.play('switch', { volume: 0.3 });
+            } catch (e) {
+                console.log("Switch sound not available");
+            }
+            
+            console.log(`Bomb type changed from ${previousBombType} to ${bombType}`);
+        }
+        
+        // Update UI
+        this.updateBombUI();
+        
+        // Only create a new bomb if not actively aiming or if no bomb exists
+        if (!this.isAiming) {
+            // Create a new bomb with the selected type using the BombLauncher
+            if (this.bombLauncher) {
+                console.log(`Creating new bomb of type ${bombType}`);
+                this.bombLauncher.createBomb(bombType);
                 
-                // Update the highlight position
-                if (this.bombHighlight) {
-                    this.bombHighlight.setPosition(this.BOW_X, this.BOW_Y - 20);
+                // Store reference to the bombLauncher's bomb for backward compatibility
+                this.bomb = this.bombLauncher.bomb;
+                
+                // Add a small highlight effect to show the new bomb
+                const highlight = this.add.circle(this.BOW_X, this.BOW_Y - 20, 35, 0xffff00, 0.3);
+                highlight.setDepth(11);
+                
+                // Animate the highlight
+                this.tweens.add({
+                    targets: highlight,
+                    alpha: 0,
+                    scale: 1.5,
+                    duration: 500,
+                    onComplete: () => {
+                        highlight.destroy();
+                    }
+                });
+            } else {
+                // Fallback to legacy method if BombLauncher isn't available
+                if (this.bomb && this.bomb.body && this.bomb.body.isStatic) {
+                    this.bomb.setTexture(bombType);
+                    
+                    // Make sure the bomb is at the slingshot position
+                    this.bomb.setPosition(this.BOW_X, this.BOW_Y - 20);
+                    
+                    // Update the highlight position
+                    if (this.bombHighlight) {
+                        this.bombHighlight.setPosition(this.BOW_X, this.BOW_Y - 20);
+                    }
+                } else {
+                    // Create a new bomb if none exists
+                    this.resetBomb();
                 }
             }
+        } else if (this.isAiming && this.bomb && this.bomb.body && this.bomb.body.isStatic) {
+            // If already aiming, just update the texture without changing position
+            this.bomb.setTexture(bombType);
+            
+            // Add a quick flash effect around the bomb to show the texture change
+            const aimingFlash = this.add.circle(this.bomb.x, this.bomb.y, 35, 0xffff00, 0.3);
+            aimingFlash.setDepth(11);
+            
+            // Animate the flash
+            this.tweens.add({
+                targets: aimingFlash,
+                alpha: 0,
+                scale: 1.5,
+                duration: 300,
+                onComplete: () => {
+                    aimingFlash.destroy();
+                }
+            });
+            
+            console.log(`Changed texture to ${bombType} while aiming`);
+        } else {
+            console.log(`Bomb type set to ${bombType}, will be used for next bomb`);
         }
     }
     
@@ -3104,6 +3210,10 @@
     }
 
     handleStickyBomb(x, y, block) {
+        if (this.debugMode) {
+            console.log("Starting sticky bomb effect at", x, y);
+        }
+        
         // Create a visual sticky effect to show bomb has stuck, but not exploded
         const stickyEffect = this.add.circle(x, y, 30, 0xff99ff, 0.5);
         stickyEffect.setDepth(15);
@@ -3137,21 +3247,54 @@
         
         // Keep a reference to the original bomb sprite
         let bombSprite = null;
-        if (this.bomb) {
+        
+        // Get active bomb reference
+        const activeBomb = (this.bombLauncher && this.bombLauncher.bomb) ? this.bombLauncher.bomb : this.bomb;
+        
+        if (activeBomb) {
             // Fix the bomb in place
-            this.bomb.setStatic(true);
-            // Store the bomb's position and type
-            const bombType = this.bomb.bombType;
+            activeBomb.setStatic(true);
+            
+            // Store the original position
+            activeBomb.originalX = activeBomb.x;
+            activeBomb.originalY = activeBomb.y;
             
             // Make the bomb appear at the correct position
-            this.bomb.setPosition(x, y);
+            activeBomb.setPosition(x, y);
+            
+            // Mark the bomb as sticky
+            activeBomb.isSticky = true;
+            
+            // Ensure it's not considered exploded
+            activeBomb.hasExploded = false;
             
             // Store reference to the bomb sprite
-            bombSprite = this.bomb;
+            bombSprite = activeBomb;
             
-            // Destroy original bomb reference - but not the visual
-            this.bomb = null;
-            console.log("Sticky bomb placed, this.bomb reference cleared");
+            // Make sure the bomb is visible
+            activeBomb.setVisible(true);
+            
+            // Update bomb state
+            if (this.bombLauncher && this.bombLauncher.bombState) {
+                this.bombLauncher.bombState.active = true;
+            }
+            
+            if (this.debugMode) {
+                console.log("Sticky bomb marked, using existing bomb at", x, y);
+            }
+            
+            // IMPORTANT: Clear primary bomb references after storing local reference for the sticky bomb
+            // This allows the launcher to create a new bomb
+            if (this.bombLauncher && this.bombLauncher.bomb === activeBomb) {
+                this.bombLauncher.bomb = null;
+                if (this.bombLauncher.bombState) {
+                    this.bombLauncher.bombState.active = false;
+                }
+            }
+            
+            if (this.bomb === activeBomb) {
+                this.bomb = null;
+            }
         }
         
         // Create a sticky bomb object to track its state
@@ -3161,8 +3304,11 @@
             isActive: true,
             visualEffect: stickyEffect,
             particles: particles,
+            emitter: emitter,
             bombSprite: bombSprite, // Store the bomb sprite reference
-            explosionRadius: 440 // Wider explosion radius than standard bomb (doubled from 220)
+            explosionRadius: 440, // Wider explosion radius than standard bomb (doubled from 220)
+            isSticky: true, // Mark this as a sticky bomb
+            createdAt: Date.now() // Add timestamp for debugging
         };
         
         // Add the sticky bomb to an array to track all active sticky bombs
@@ -3179,17 +3325,21 @@
         }
         
         // Check if we need to reset the bomb after a delay to allow for the next shot
-        this.time.delayedCall(2000, () => {
-            if (this.shotsRemaining > 0 && !this.bomb) {
+        // Only create a new bomb if there isn't one active
+        this.time.delayedCall(1000, () => {
+            const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+            if (this.shotsRemaining > 0 && noBombAvailable) {
                 console.log("Creating new bomb after placing sticky bomb");
                 this.resetBomb();
-            } else {
+            } else if (noBombAvailable) {
                 this.checkLevelCompletion();
             }
         });
         
         // Log that a sticky bomb has been placed
         console.log("Sticky bomb placed at", x, y);
+        
+        return stickyBomb;
     }
     
     // Add a new method to trigger sticky bombs
@@ -3220,35 +3370,22 @@
                         // Create a temporary visual indicator of trigger radius
                         const radiusVisual = this.add.circle(x, y, drillerCheckRadius, 0xFF9900, 0.2);
                         radiusVisual.setDepth(20);
+                        
+                        // Fade out and remove
                         this.tweens.add({
                             targets: radiusVisual,
                             alpha: 0,
                             duration: 500,
                             onComplete: () => radiusVisual.destroy()
                         });
-                        
-                        // Draw line to triggered driller bomb
-                        const line = this.add.graphics();
-                        line.lineStyle(3, 0xFF9900, 0.8);
-                        line.beginPath();
-                        line.moveTo(x, y);
-                        line.lineTo(bomb.x, bomb.y);
-                        line.strokePath();
-                        line.setDepth(20);
-                        this.tweens.add({
-                            targets: line,
-                            alpha: 0,
-                            duration: 500,
-                            onComplete: () => line.destroy()
-                        });
                     }
                 }
             }
         });
         
-        // Second pass: check for regular sticky bombs with normal radius
+        // Then check for sticky bombs with the normal radius
         this.activeStickyBombs.forEach(bomb => {
-            if (!bomb.isActive || bomb.isDriller) return; // Skip driller bombs as we already processed them
+            if (!bomb.isActive || allTriggeredBombs.includes(bomb)) return;
             
             const distance = Phaser.Math.Distance.Between(x, y, bomb.x, bomb.y);
             if (distance < radius) {
@@ -3257,39 +3394,69 @@
                 // Mark as inactive immediately to prevent double-triggering
                 bomb.isActive = false;
                 
+                // Visual debug effect
                 if (this.debugMode) {
-                    console.log(`Regular sticky bomb triggered at ${bomb.x},${bomb.y} - distance: ${distance.toFixed(2)}, radius: ${radius}`);
+                    console.log(`Sticky bomb triggered at ${bomb.x},${bomb.y} - distance: ${distance.toFixed(2)}`);
+                    
+                    // Create a temporary visual indicator of trigger radius
+                    const radiusVisual = this.add.circle(x, y, radius, 0xFF99FF, 0.2);
+                    radiusVisual.setDepth(20);
+                    
+                    // Fade out and remove
+                    this.tweens.add({
+                        targets: radiusVisual,
+                        alpha: 0,
+                        duration: 500,
+                        onComplete: () => radiusVisual.destroy()
+                    });
                 }
             }
         });
         
-        // Update active sticky bombs list BEFORE processing explosions to prevent cascading issues
-        this.activeStickyBombs = this.activeStickyBombs.filter(bomb => bomb.isActive);
+        // Now process all triggered bombs
+        allTriggeredBombs.forEach(bomb => {
+            // Process delayed explosion based on bomb type
+            if (bomb.isDriller) {
+                // Driller bombs need a drill explosion
+                this.time.delayedCall(300, () => {
+                    // Create drill explosion at bomb's position
+                    if (this.bombUtils && this.bombUtils.createDrillerExplosion) {
+                        this.bombUtils.createDrillerExplosion(bomb.x, bomb.y);
+                    } else {
+                        this.createDrillerExplosion(bomb.x, bomb.y);
+                    }
+                    
+                    // Clean up resources
+                    this.cleanupBombResources(bomb);
+                });
+            } else {
+                // Regular sticky bombs get a large explosion after a delay
+                this.time.delayedCall(300, () => {
+                    // Create large explosion at bomb's position
+                    if (this.bombUtils && this.bombUtils.createLargeExplosion) {
+                        this.bombUtils.createLargeExplosion(bomb.x, bomb.y);
+                    } else {
+                        this.createLargeExplosion(bomb.x, bomb.y);
+                    }
+                    
+                    // Destroy blocks in a large radius
+                    const explosionRadius = bomb.explosionRadius || 200;
+                    this.destroyBlocksInRadius(bomb.x, bomb.y, explosionRadius);
+                    
+                    // Clean up resources
+                    this.cleanupBombResources(bomb);
+                });
+            }
+        });
         
-        if (this.debugMode) {
-            console.log(`Processing ${allTriggeredBombs.length} triggered bombs. Remaining active bombs: ${this.activeStickyBombs.length}`);
+        // Remove triggered bombs from the active array
+        if (allTriggeredBombs.length > 0) {
+            this.activeStickyBombs = this.activeStickyBombs.filter(bomb => 
+                !allTriggeredBombs.includes(bomb)
+            );
         }
         
-        // Process all triggered bombs
-        allTriggeredBombs.forEach(bomb => {
-            try {
-                // Ensure all visual resources are properly cleaned up
-                this.bombUtils.cleanupBombResources(bomb);
-                
-                // Create appropriate explosion based on bomb type
-                if (bomb.isDriller) {
-                    // Special effects for driller bomb explosion
-                    this.bombUtils.createDrillerExplosion(bomb.x, bomb.y);
-                    this.destroyBlocksInRadius(bomb.x, bomb.y, bomb.explosionRadius || 380);
-                } else {
-                    // Standard sticky bomb explosion
-                    this.bombUtils.createLargeExplosion(bomb.x, bomb.y);
-                    this.destroyBlocksInRadius(bomb.x, bomb.y, bomb.explosionRadius || 440);
-                }
-            } catch (error) {
-                console.error(`Error processing triggered bomb:`, error);
-            }
-        });
+        return allTriggeredBombs.length > 0;
     }
     
     createLargeExplosion(x, y) {
@@ -4325,6 +4492,10 @@
     }
 
     handleDrillerBomb(x, y, block) {
+        if (this.debugMode) {
+            console.log("Starting driller bomb effect at", x, y);
+        }
+        
         // Create a visual driller effect to show bomb has started drilling
         const drillerEffect = this.add.circle(x, y, 25, 0xBB5500, 0.7);
         drillerEffect.setDepth(15);
@@ -4359,22 +4530,73 @@
         let velocityX = 0;
         let velocityY = 0;
         
-        if (this.bomb) {
-            // Get the bomb's velocity before making it static
-            velocityX = this.bomb.body.velocity.x;
-            velocityY = this.bomb.body.velocity.y;
-            
-            // Fix the bomb in place
-            this.bomb.setStatic(true);
-            
-            // Store reference to the bomb sprite
-            bombSprite = this.bomb;
-            
-            // Destroy original bomb reference - but not the visual
-            this.bomb = null;
-            if (this.debugMode) {
-                console.log("Driller bomb placed, this.bomb reference cleared");
+        // Get active bomb reference
+        const activeBomb = (this.bombLauncher && this.bombLauncher.bomb) ? this.bombLauncher.bomb : this.bomb;
+        
+        if (activeBomb) {
+            try {
+                // Try to get the velocity - either from stored velocity or directly from body
+                if (activeBomb.storedVelocityX !== undefined && activeBomb.storedVelocityY !== undefined) {
+                    velocityX = activeBomb.storedVelocityX;
+                    velocityY = activeBomb.storedVelocityY;
+                    
+                    if (this.debugMode) {
+                        console.log(`Using stored velocity for driller: ${velocityX}, ${velocityY}`);
+                    }
+                } else if (activeBomb.body && activeBomb.body.velocity) {
+                    velocityX = activeBomb.body.velocity.x;
+                    velocityY = activeBomb.body.velocity.y;
+                    
+                    if (this.debugMode) {
+                        console.log(`Using direct velocity for driller: ${velocityX}, ${velocityY}`);
+                    }
+                } else {
+                    // Fallback to estimating direction based on bomb and block positions
+                    if (block) {
+                        const dx = activeBomb.x - block.x;
+                        const dy = activeBomb.y - block.y;
+                        const mag = Math.sqrt(dx * dx + dy * dy);
+                        if (mag > 0) {
+                            // Use normalized direction with a default magnitude
+                            const defaultMagnitude = 5;
+                            velocityX = -(dx / mag) * defaultMagnitude;
+                            velocityY = -(dy / mag) * defaultMagnitude;
+                            
+                            if (this.debugMode) {
+                                console.log(`Using fallback direction for driller: ${velocityX}, ${velocityY}`);
+                            }
+                        }
+                    }
+                }
+                
+                // Fix the bomb in place but keep it visible
+                activeBomb.setStatic(true);
+                
+                // Store the original position
+                activeBomb.originalX = activeBomb.x;
+                activeBomb.originalY = activeBomb.y;
+                
+                // Store original velocity for reference
+                activeBomb.storedVelocityX = velocityX;
+                activeBomb.storedVelocityY = velocityY;
+                
+                // Mark the bomb as a driller
+                activeBomb.isDriller = true;
+                
+                // Ensure it's not marked as exploded
+                activeBomb.hasExploded = false;
+                
+                // Store reference to the bomb sprite
+                bombSprite = activeBomb;
+                
+                if (this.debugMode) {
+                    console.log(`Driller bomb marked, using existing bomb at ${x}, ${y}`);
+                }
+            } catch (error) {
+                console.error("Error setting up driller bomb:", error);
             }
+        } else {
+            console.error("No active bomb found for driller effect");
         }
         
         // Get the direction from the bomb's velocity vector
@@ -4420,12 +4642,38 @@
         // Store blocks that have been drilled through
         const drilledBlocks = [];
         
+        // Create driller bomb object to return and store
+        const drillerBomb = {
+            x: x,
+            y: y,
+            velocityX: velocityX,
+            velocityY: velocityY,
+            directionX: directionX,
+            directionY: directionY,
+            drillerEffect: drillerEffect,
+            particles: particles,
+            emitter: emitter,
+            bombSprite: bombSprite,
+            isDriller: true,
+            isActive: true,
+            createdAt: Date.now(),
+            activeBomb: activeBomb
+        };
+        
+        // Make sure we track this driller bomb
+        if (!this.activeDrillerBombs) {
+            this.activeDrillerBombs = [];
+        }
+        
+        // Add to tracking array
+        this.activeDrillerBombs.push(drillerBomb);
+        
         // Keep track of the drill interval to ensure it can be cleared
         let drillInterval = null;
         
         // Drilling animation
         drillInterval = this.time.addEvent({
-            delay: 200, // Drill through a block every 200ms
+            delay: 200, // Drill through a block every 200ms - changed from 300ms in original
             callback: () => {
                 // Update position based on direction
                 currentX += directionX * 20; // Move 20px in drill direction
@@ -4445,6 +4693,10 @@
                     bombSprite.setPosition(currentX, currentY);
                 }
                 
+                // Update the driller bomb tracking object
+                drillerBomb.x = currentX;
+                drillerBomb.y = currentY;
+                
                 // Find any blocks at the current position
                 this.iceBlocks.forEach(block => {
                     if (!block || !block.isActive) return;
@@ -4453,7 +4705,7 @@
                     const distance = Phaser.Math.Distance.Between(currentX, currentY, block.x, block.y);
                     
                     // If we're close enough to a block, drill through it
-                    if (distance < 20 && !drilledBlocks.includes(block)) {
+                    if (distance < 40 && !drilledBlocks.includes(block)) {
                         // Add to drilled blocks
                         drilledBlocks.push(block);
                         
@@ -4476,10 +4728,23 @@
                         }
                     }
                 });
+                
+                // Check if drilling has gone offscreen or reached maximum distance
+                if (currentX < 0 || currentX > this.cameras.main.width || 
+                    currentY < 0 || currentY > this.cameras.main.height) {
+                    if (drillInterval) {
+                        drillInterval.remove();
+                        drillInterval = null;
+                    }
+                    drillingComplete();
+                }
             },
             callbackScope: this,
-            repeat: maxDrillDistance
+            repeat: 100 // Allow for plenty of drilling steps
         });
+        
+        // Store interval in the driller object
+        drillerBomb.drillInterval = drillInterval;
         
         // Function to handle the end of drilling
         const drillingComplete = () => {
@@ -4493,15 +4758,18 @@
                 drillInterval = null;
             }
             
-            // Create a sticky effect at the final position
+            // Create an effect at the final position
             const finalX = currentX;
             const finalY = currentY;
+            
+            // Mark the driller bomb as inactive
+            drillerBomb.isActive = false;
             
             // Create a unique ID for this driller bomb for debugging purposes
             const bombId = 'driller_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
             
-            // Create a driller bomb object similar to sticky bomb
-            const drillerBomb = {
+            // Create a driller bomb object similar to sticky bomb - keep the bomb in place
+            const stuckDrillerBomb = {
                 id: bombId,
                 x: finalX,
                 y: finalY,
@@ -4515,39 +4783,58 @@
                 createdAt: Date.now()  // Add timestamp for debugging
             };
             
-            // Add to active sticky bombs array (reusing sticky bomb functionality)
+            // Add to active sticky bombs array for triggering by other bombs
             if (!this.activeStickyBombs) {
                 this.activeStickyBombs = [];
             }
             
-            // Add the new driller bomb to the array
-            this.activeStickyBombs.push(drillerBomb);
+            // Add the new driller bomb to the sticky array (for explosion triggering)
+            this.activeStickyBombs.push(stuckDrillerBomb);
             
-            if (this.debugMode) {
-                console.log(`Added driller bomb ${bombId} to activeStickyBombs array. Total active bombs: ${this.activeStickyBombs.length}`);
+            console.log(`Driller bomb placed at final position: ${finalX},${finalY}`);
+            
+            // Add a small particle effect at the final position to show completion
+            this.createDrillEffect(finalX, finalY);
+            
+            // IMPORTANT: Clear the active bomb reference immediately
+            if (this.bomb === bombSprite) {
+                this.bomb = null;
             }
             
-            // Check if we need to reset the bomb after a delay to allow for the next shot
-            this.time.delayedCall(1000, () => {
-                if (this.shotsRemaining > 0 && !this.bomb) {
-                    if (this.debugMode) {
-                        console.log("Creating new bomb after placing driller bomb");
-                    }
-            this.resetBomb();
-                } else {
-                    this.checkLevelCompletion();
-                }
-            });
+            if (this.bombLauncher && this.bombLauncher.bomb === bombSprite) {
+                this.bombLauncher.bomb = null;
+                this.bombLauncher.bombState.active = false;
+            }
+            
+            // Force immediate checking of the launcher state
+            console.log("Checking if new bomb should be created...");
+            console.log("Shots remaining:", this.shotsRemaining);
+            
+            // Check if we need to reset the bomb immediately
+            const noBombAvailable = (!this.bombLauncher || !this.bombLauncher.bomb) && !this.bomb;
+            console.log("No bomb available:", noBombAvailable);
+            
+            if (this.shotsRemaining > 0 && noBombAvailable) {
+                console.log("Creating new bomb right after driller completed");
+                
+                // Use a shorter delay to reset the bomb faster
+                this.time.delayedCall(500, () => {
+                    console.log("Reset bomb called from driller completion");
+                    // Explicitly call resetBomb to create a new bomb
+                    this.resetBomb();
+                });
+            } else if (noBombAvailable) {
+                console.log("No shots remaining, checking level completion");
+                this.checkLevelCompletion();
+            }
         };
         
         // Set a failsafe timer to ensure drilling completes even if normal process fails
-        this.time.delayedCall(maxDrillDistance * 300, () => {
-            if (drillInterval) {
+        this.time.delayedCall(7000, () => {
+            if (drillInterval && drillInterval.active) {
                 if (this.debugMode) {
                     console.log("Failsafe: Forcing drill completion");
                 }
-                drillInterval.remove();
-                drillInterval = null;
                 drillingComplete();
             }
         });
@@ -4558,6 +4845,8 @@
         } catch (e) {
             console.log("Sound not available:", e);
         }
+        
+        return drillerBomb;
     }
 
     // Helper function to create a drill effect
@@ -5317,6 +5606,15 @@
                 this.setupFallbackBombs();
             }
             
+            // TESTING: Add at least 1 of each bomb type regardless of level
+            Object.keys(this.BOMB_TYPES).forEach(bombTypeKey => {
+                const bombType = this.BOMB_TYPES[bombTypeKey];
+                if (this.bombsRemaining[bombType] < 1) {
+                    this.bombsRemaining[bombType] = 1;
+                    console.log(`TESTING: Added 1 ${bombType} for testing purposes`);
+                }
+            });
+            
             // Always set driller bombs to 6 for testing purposes
             this.bombsRemaining[this.BOMB_TYPES.DRILLER] = 6;
             console.log(`Set driller bomb count to 6 for testing`);
@@ -5441,7 +5739,17 @@
                 this.currentBombType = this.BOMB_TYPES.BLAST;
         }
         
-        console.log(`Fallback bomb counts set for level ${this.currentLevel}:`, this.bombsRemaining);
+        // TESTING: Add at least 1 of each bomb type regardless of level
+        Object.keys(this.BOMB_TYPES).forEach(bombTypeKey => {
+            const bombType = this.BOMB_TYPES[bombTypeKey];
+            if (this.bombsRemaining[bombType] < 1) {
+                this.bombsRemaining[bombType] = 1;
+                console.log(`TESTING: Added 1 ${bombType} for testing purposes in fallback setup`);
+            }
+        });
+        
+        // Log bomb setup
+        console.log("Fallback bomb setup complete:", this.bombsRemaining);
     }
 
     // Debugging function to verify if assets are loaded properly
@@ -5840,14 +6148,48 @@
     
     // Helper method to check if a bomb is currently active
     isBombActive() {
+        // If BombLauncher is available, use its method
+        if (this.bombLauncher) {
+            return this.bombLauncher.isBombActive();
+        }
+        // Fallback to original implementation
         return this.bomb && this.bomb.active && this.bombState && this.bombState.active;
     }
     
     // Helper method to fire the bomb based on pointer position
     fireBomb(pointer) {
-        if (!this.bomb || this.isBombActive()) return;
-        
+        if (!pointer || pointer.x === undefined || pointer.y === undefined) {
+            console.warn("Invalid pointer in fireBomb method");
+            return;
+        }
+
         try {
+            // Use BombLauncher if available
+            if (this.bombLauncher) {
+                if (this.bombLauncher.launchBomb(pointer)) {
+                    // Bomb was successfully launched
+                    
+                    // Add haptic feedback for mobile devices if supported
+                    if (window.navigator && window.navigator.vibrate) {
+                        window.navigator.vibrate(100); // 100ms vibration on launch
+                    }
+                    
+                    // Decrement shots
+                    this.shotsRemaining--;
+                    this.events.emit('updateShots', this.shotsRemaining);
+                    
+                    // Clear the trajectory if any remains
+                    this.clearTrajectory();
+                    
+                    // Log success
+                    console.log(`Bomb fired successfully via BombLauncher`);
+                }
+                return;
+            }
+            
+            // Fallback to original implementation if BombLauncher isn't available
+            console.warn("BombLauncher not available, using legacy firing method");
+            
             // Calculate angle and distance from slingshot
             const dx = this.BOW_X - pointer.x;
             const dy = this.BOW_Y - 30 - pointer.y;
@@ -5905,50 +6247,72 @@
         } catch (error) {
             console.error("Error in fireBomb:", error);
             // Try to recover
-            this.resetBomb();
+            if (this.bombLauncher) {
+                this.bombLauncher.createBomb(this.currentBombType || 'bomb');
+            } else {
+                this.resetBomb();
+            }
         }
     }
     
     // Helper method to draw trajectory based on pointer position
     drawTrajectoryFromPointer(pointer) {
-        // Calculate angle and distance from slingshot
-        const dx = this.BOW_X - pointer.x;
-        const dy = this.BOW_Y - 30 - pointer.y;
-        const distance = Math.min(
-            this.MAX_DRAG_DISTANCE,
-            Math.sqrt(dx * dx + dy * dy)
-        );
-        
-        // Calculate angle
-        const angle = Math.atan2(dy, dx);
-        
-        // Calculate bomb position
-        const bombX = this.BOW_X - distance * Math.cos(angle);
-        const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
-        
-        // Update bomb position if it exists
-        if (this.bomb) {
-            this.bomb.setPosition(bombX, bombY);
+        if (!pointer || pointer.x === undefined || pointer.y === undefined) {
+            console.warn("Invalid pointer in drawTrajectoryFromPointer");
+            return;
         }
         
-        // Draw elastic line
-        if (this.elasticLine) {
-            this.elasticLine.clear();
-            this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
-            this.elasticLine.beginPath();
-            // Draw from top of bow through the bomb position and to bottom of bow
-            this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
-            this.elasticLine.lineTo(bombX, bombY); // Bomb position
-            this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
-            this.elasticLine.stroke();
+        try {
+            // Use BombLauncher if available
+            if (this.bombLauncher) {
+                this.bombLauncher.drawTrajectoryFromPointer(pointer);
+                return;
+            }
+            
+            // Fallback to original implementation if BombLauncher isn't available
+            console.warn("BombLauncher not available, using legacy drawing method");
+            
+            // Calculate angle and distance from slingshot
+            const dx = this.BOW_X - pointer.x;
+            const dy = this.BOW_Y - 30 - pointer.y;
+            const distance = Math.min(
+                this.MAX_DRAG_DISTANCE,
+                Math.sqrt(dx * dx + dy * dy)
+            );
+            
+            // Calculate angle
+            const angle = Math.atan2(dy, dx);
+            
+            // Calculate bomb position
+            const bombX = this.BOW_X - distance * Math.cos(angle);
+            const bombY = (this.BOW_Y - 30) - distance * Math.sin(angle);
+            
+            // Update bomb position if it exists
+            if (this.bomb) {
+                this.bomb.setPosition(bombX, bombY);
+            }
+            
+            // Draw elastic line
+            if (this.elasticLine) {
+                this.elasticLine.clear();
+                this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
+                this.elasticLine.beginPath();
+                // Draw from top of bow through the bomb position and to bottom of bow
+                this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+                this.elasticLine.lineTo(bombX, bombY); // Bomb position
+                this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
+                this.elasticLine.stroke();
+            }
+            
+            // Calculate velocity based on drag distance and angle
+            const forceX = dx * this.SHOT_POWER;
+            const forceY = dy * this.SHOT_POWER;
+            
+            // Draw trajectory prediction
+            this.drawTrajectory(bombX, bombY, forceX, forceY);
+        } catch (error) {
+            console.error("Error in drawTrajectoryFromPointer:", error);
         }
-        
-        // Calculate velocity based on drag distance and angle
-        const forceX = dx * this.SHOT_POWER;
-        const forceY = dy * this.SHOT_POWER;
-        
-        // Draw trajectory prediction
-        this.drawTrajectory(bombX, bombY, forceX, forceY);
     }
 
     // New method to play a random congratulatory voice message
@@ -6204,6 +6568,269 @@
             
         } catch (error) {
             console.error("Error displaying special clear text:", error);
+        }
+    }
+
+    // Method to create a fizzle effect for bombs that go out of bounds
+    createFizzleEffect(x, y) {
+        try {
+            // Create a particle emitter for the fizzle effect
+            const particles = this.add.particles('particle');
+            
+            const emitter = particles.createEmitter({
+                x: x,
+                y: y,
+                speed: { min: 50, max: 150 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.6, end: 0 },
+                alpha: { start: 0.8, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 800,
+                gravityY: 100,
+                quantity: 15,
+                tint: [0xffff00, 0xff0000, 0xffffff]
+            });
+            
+            // Play a sound effect if available
+            if (this.audioManager && this.audioManager.playSound) {
+                this.audioManager.playSound('fizzle');
+            }
+            
+            // Set the emitter to emit all particles at once, then stop
+            emitter.explode(20, x, y);
+            
+            // Destroy the particle system after emissions complete
+            this.time.delayedCall(1000, () => {
+                particles.destroy();
+            });
+        } catch (error) {
+            console.error("Error creating fizzle effect:", error);
+        }
+    }
+
+    /**
+     * Adds a pulsing hint for mobile users when a new bomb is loaded
+     */
+    addMobilePulseHint() {
+        try {
+            if (!this.bombLauncher || !this.bombLauncher.bomb) return;
+            
+            // Add touch indicator text for mobile users
+            this.touchIndicator = this.add.text(
+                this.bombLauncher.bomb.x,
+                this.bombLauncher.bomb.y - 60,
+                "Hold & Drag to Aim",
+                {
+                    fontFamily: 'Arial',
+                    fontSize: '24px',
+                    align: 'center',
+                    color: '#FFFFFF',
+                    stroke: '#000000',
+                    strokeThickness: 4,
+                    shadow: {
+                        offsetX: 2,
+                        offsetY: 2,
+                        color: '#000',
+                        blur: 2,
+                        stroke: true,
+                        fill: true
+                    }
+                }
+            ).setOrigin(0.5, 0.5).setDepth(20);
+            
+            // Fade out the indicator after a short delay
+            this.tweens.add({
+                targets: this.touchIndicator,
+                alpha: 0,
+                delay: 1000,
+                duration: 500,
+                onComplete: () => {
+                    if (this.touchIndicator) this.touchIndicator.destroy();
+                }
+            });
+            
+            if (this.debugMode && this.debugText) {
+                console.log('Mobile hint added');
+            }
+        } catch (error) {
+            console.error("Error adding mobile pulse hint:", error);
+        }
+    }
+
+    // Apply any game settings
+    applyGameSettings(delta) {
+        try {
+            // Check if we have a bomb when we should
+            const shouldHaveBomb = !this.isLevelComplete && 
+                                 !this.isGameOver && 
+                                 this.shotsRemaining > 0 &&
+                                 !this.isAiming;
+            
+            // Auto-create a bomb if one is missing when it should exist
+            const bombLauncherHasBomb = this.bombLauncher && this.bombLauncher.bomb;
+            const sceneBombExists = this.bomb && this.bomb.scene;
+            
+            // If we're not in a transition state and don't have an active/flying bomb
+            if (shouldHaveBomb && !bombLauncherHasBomb && !sceneBombExists && !this.bombState.active) {
+                const timeSinceLastReset = Date.now() - this.bombState.lastResetTime;
+                
+                // Only try to create a new bomb if we haven't just reset
+                if (timeSinceLastReset > 1000) {
+                    console.log("Auto-creating missing bomb in applyGameSettings");
+                    this.resetBomb();
+                }
+            }
+            
+            // Check if bomb is stuck in aiming state but not moving
+            if (this.isAiming && this.bombState.lastAimUpdate) {
+                const aimIdleTime = Date.now() - this.bombState.lastAimUpdate;
+                
+                // If aiming hasn't been updated for 10 seconds, auto-release
+                if (aimIdleTime > 10000) {
+                    console.log("Detected stuck aiming state, auto-releasing");
+                    this.isAiming = false;
+                    
+                    // Reset the bomb to recover from the stuck state
+                    this.time.delayedCall(500, () => {
+                        this.resetBomb();
+                    });
+                }
+            }
+            
+            // Check if there's a stuck or lost bomb
+            if (this.bombState.active) {
+                const timeSinceActivation = Date.now() - this.bombState.lastBombFired;
+                
+                // Check for bombs that have stopped moving
+                if (this.bomb && this.bomb.body && this.bomb.body.velocity && !this.bomb.hasHitIceBlock) {
+                    // Skip special bomb types that shouldn't auto-explode
+                    const bombType = this.bomb.bombType || this.currentBombType;
+                    if (bombType !== this.BOMB_TYPES.STICKY && 
+                        bombType !== this.BOMB_TYPES.DRILLER && 
+                        bombType !== this.BOMB_TYPES.RICOCHET) {
+                        
+                        // Calculate speed of the bomb
+                        const velocity = this.bomb.body.velocity;
+                        const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+                        
+                        // If bomb has been active for at least 3 seconds and has very low speed
+                        if (timeSinceActivation > 3000 && speed < 0.3) {
+                            console.log(`Backup check: Bomb stopped (speed: ${speed.toFixed(2)}), exploding it`);
+                            
+                            // Handle explosion based on bomb type
+                            const bombX = this.bomb.x;
+                            const bombY = this.bomb.y;
+                            
+                            try {
+                                // Use bombUtils if available, otherwise fall back to direct methods
+                                if (this.bombUtils) {
+                                    switch(bombType) {
+                                        case this.BOMB_TYPES.BLAST:
+                                            this.bombUtils.handleBlastBomb(bombX, bombY);
+                                            break;
+                                        case this.BOMB_TYPES.PIERCER:
+                                            // Pass a default direction for piercer bombs that have stopped
+                                            this.bombUtils.handlePiercerBomb(bombX, bombY, {x: 0, y: 1});
+                                            break;
+                                        case this.BOMB_TYPES.CLUSTER:
+                                            this.bombUtils.handleClusterBomb(bombX, bombY);
+                                            break;
+                                        case this.BOMB_TYPES.SHATTERER:
+                                            this.bombUtils.handleShattererBomb(bombX, bombY);
+                                            break;
+                                        default:
+                                            this.bombUtils.handleBlastBomb(bombX, bombY);
+                                            break;
+                                    }
+                                } else {
+                                    switch(bombType) {
+                                        case this.BOMB_TYPES.BLAST:
+                                            this.handleBlastBomb(bombX, bombY);
+                                            break;
+                                        case this.BOMB_TYPES.PIERCER:
+                                            // Check if the method accepts velocity parameter
+                                            if (this.handlePiercerBomb.length > 2) {
+                                                this.handlePiercerBomb(bombX, bombY, {x: 0, y: 1});
+                                            } else {
+                                                this.handlePiercerBomb(bombX, bombY);
+                                            }
+                                            break;
+                                        case this.BOMB_TYPES.CLUSTER:
+                                            this.handleClusterBomb(bombX, bombY);
+                                            break;
+                                        case this.BOMB_TYPES.SHATTERER:
+                                            this.handleShattererBomb(bombX, bombY);
+                                            break;
+                                        default:
+                                            this.handleBlastBomb(bombX, bombY);
+                                            break;
+                                    }
+                                }
+                            } catch (explosionError) {
+                                console.error(`Error handling explosion for ${bombType}:`, explosionError);
+                                
+                                // Fallback to simplest explosion if specific handler failed
+                                try {
+                                    if (this.bombUtils) {
+                                        this.bombUtils.handleBlastBomb(bombX, bombY);
+                                    } else {
+                                        this.handleBlastBomb(bombX, bombY);
+                                    }
+                                } catch (fallbackError) {
+                                    console.error("Fallback explosion also failed:", fallbackError);
+                                }
+                            }
+                            
+                            // Clean up bomb
+                            if (this.bomb.scene) {
+                                this.bomb.destroy();
+                            }
+                            this.bomb = null;
+                            this.bombState.active = false;
+                            
+                            // Create a new bomb after a delay
+                            this.time.delayedCall(1000, () => {
+                                if (this.shotsRemaining > 0) {
+                                    this.resetBomb();
+                                }
+                            });
+                            
+                            return; // Exit early after handling the bomb
+                        }
+                    }
+                }
+                
+                // If a bomb has been active for more than 20 seconds without hitting anything
+                if (timeSinceActivation > 20000) {
+                    console.log("Detected stuck bomb, auto-resetting");
+                    
+                    // Create a fizzle effect at the bomb's position if it exists
+                    if (this.bomb && this.bomb.scene) {
+                        this.createFizzleEffect(this.bomb.x, this.bomb.y);
+                    }
+                    
+                    // Reset the bomb state
+                    this.bombState.active = false;
+                    
+                    // Reset the bomb to create a new one
+                    this.resetBomb();
+                }
+            }
+            
+            // Handle any pending level completion checks if game state is idle
+            if (!this.isAiming && !this.bombState.active) {
+                // Check for automatic level completion after a delay
+                const now = Date.now();
+                
+                // If we haven't checked for a while and game is idle
+                if (this.lastLevelCheckTime && now - this.lastLevelCheckTime > 5000) {
+                    // Check level completion if no active bombs
+                    this.checkLevelCompletion();
+                    this.lastLevelCheckTime = now;
+                }
+            }
+        } catch (error) {
+            console.error("Error in applyGameSettings:", error);
         }
     }
 }

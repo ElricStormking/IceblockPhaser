@@ -61,6 +61,10 @@ class BombUtils {
         bomb.isLaunched = true;
         bomb.hasHitIceBlock = false;
         
+        // Store initial velocity for driller and sticky bombs
+        bomb.storedVelocityX = forceX * 100; // Amplify for better storage
+        bomb.storedVelocityY = forceY * 100;
+        
         // Apply impulse (instant force)
         this.scene.matter.body.applyForce(bomb.body, 
             { x: x, y: y }, 
@@ -165,6 +169,8 @@ class BombUtils {
     
     // Handle sticky bomb placement
     handleStickyBomb(x, y, block) {
+        console.log("BombUtils.handleStickyBomb called at", x, y);
+        
         // Create a visual sticky effect to show bomb has stuck, but not exploded
         const stickyEffect = this.scene.add.circle(x, y, 30, 0xff99ff, 0.5);
         stickyEffect.setDepth(15);
@@ -198,20 +204,42 @@ class BombUtils {
         
         // Keep a reference to the original bomb sprite
         let bombSprite = null;
-        if (this.scene.bomb) {
+        
+        // Get the active bomb reference from either direct reference or launcher
+        let activeBomb = null;
+        if (this.scene.bombLauncher && this.scene.bombLauncher.bomb) {
+            activeBomb = this.scene.bombLauncher.bomb;
+        } else if (this.scene.bomb) {
+            activeBomb = this.scene.bomb;
+        }
+        
+        if (activeBomb) {
             // Fix the bomb in place
-            this.scene.bomb.setStatic(true);
-            // Store the bomb's position and type
-            const bombType = this.scene.bomb.bombType;
-            
+            activeBomb.setStatic(true);
             // Make the bomb appear at the correct position
-            this.scene.bomb.setPosition(x, y);
+            activeBomb.setPosition(x, y);
+            
+            // Mark the bomb as sticky
+            activeBomb.isSticky = true;
+            activeBomb.hasExploded = false;
             
             // Store reference to the bomb sprite
-            bombSprite = this.scene.bomb;
+            bombSprite = activeBomb;
             
-            // Destroy original bomb reference - but not the visual
-            this.scene.bomb = null;
+            console.log("Sticky bomb reference maintained, fixing bomb position at", x, y);
+            
+            // IMPORTANT: Clear the scene's bomb references after storing our local reference
+            // This ensures the launcher will create a new bomb
+            if (this.scene.bombLauncher && this.scene.bombLauncher.bomb === activeBomb) {
+                this.scene.bombLauncher.bomb = null;
+                if (this.scene.bombLauncher.bombState) {
+                    this.scene.bombLauncher.bombState.active = false;
+                }
+            }
+            
+            if (this.scene.bomb === activeBomb) {
+                this.scene.bomb = null;
+            }
         }
         
         // Create a sticky bomb object to track its state
@@ -221,8 +249,11 @@ class BombUtils {
             isActive: true,
             visualEffect: stickyEffect,
             particles: particles,
+            emitter: emitter,
             bombSprite: bombSprite, // Store the bomb sprite reference
-            explosionRadius: 440 // Wider explosion radius than standard bomb
+            explosionRadius: 440, // Wider explosion radius than standard bomb
+            isSticky: true,
+            createdAt: Date.now()
         };
         
         // Add the sticky bomb to an array to track all active sticky bombs
@@ -237,6 +268,8 @@ class BombUtils {
         } catch (e) {
             console.log("Sound not available:", e);
         }
+        
+        console.log("Sticky bomb - not destroying as it needs to stay stuck until triggered");
         
         return stickyBomb;
     }
@@ -316,96 +349,60 @@ class BombUtils {
         }
     }
     
-    // Handle driller bomb effects
-    handleDrillerBomb(x, y, block, velocity) {
-        velocity = velocity || (this.scene.bomb ? this.scene.bomb.body.velocity : {x: 0, y: 1});
+    // Handle driller bomb effect
+    handleDrillerBomb(x, y, block, velocityX, velocityY) {
+        console.log("BombUtils.handleDrillerBomb called at", x, y);
         
-        // Create a visual driller effect to show bomb has started drilling
-        const drillerEffect = this.scene.add.circle(x, y, 25, 0xBB5500, 0.7);
-        drillerEffect.setDepth(15);
+        // Handle the case where separate velocity components are provided
+        let velocity = { x: 0, y: 0 };
         
-        // Animate the driller effect to rotate
-        this.scene.tweens.add({
-            targets: drillerEffect,
-            angle: 360,
-            duration: 1000,
-            ease: 'Linear',
-            repeat: -1 // Repeat forever until removed
-        });
-        
-        // Add particles for drilling effect
-        const particles = this.scene.add.particles('particle');
-        const emitter = particles.createEmitter({
-            speed: { min: 10, max: 30 },
-            scale: { start: 0.3, end: 0 },
-            alpha: { start: 0.7, end: 0 },
-            lifespan: 800,
-            blendMode: 'ADD',
-            tint: 0xBB5500, // Brown/orange tint for drill
-            frequency: 100, // Emit particles frequently
-            quantity: 2
-        });
-        
-        // Set particle emission point
-        emitter.setPosition(x, y);
-        
-        // Keep a reference to the original bomb sprite and velocity
-        let bombSprite = null;
-        let velocityX = velocity.x;
-        let velocityY = velocity.y;
-        
-        if (this.scene.bomb) {
-            // Get the bomb's velocity before making it static
-            velocityX = this.scene.bomb.body.velocity.x;
-            velocityY = this.scene.bomb.body.velocity.y;
-            
-            // Fix the bomb in place
-            this.scene.bomb.setStatic(true);
-            
-            // Store reference to the bomb sprite
-            bombSprite = this.scene.bomb;
-            
-            // Destroy original bomb reference - but not the visual
-            this.scene.bomb = null;
+        if (velocityX !== undefined && velocityY !== undefined) {
+            velocity = { x: velocityX, y: velocityY };
+            console.log(`Using provided velocity: ${velocityX}, ${velocityY}`);
+        } else if (this.scene.bomb && this.scene.bomb.body && this.scene.bomb.body.velocity) {
+            velocity = this.scene.bomb.body.velocity;
+            console.log(`Using bomb body velocity: ${velocity.x}, ${velocity.y}`);
+        } else if (this.scene.bomb && this.scene.bomb.storedVelocityX !== undefined && this.scene.bomb.storedVelocityY !== undefined) {
+            velocity = { 
+                x: this.scene.bomb.storedVelocityX, 
+                y: this.scene.bomb.storedVelocityY 
+            };
+            console.log(`Using bomb stored velocity: ${velocity.x}, ${velocity.y}`);
+        } else {
+            console.log(`No velocity available, using default.`);
+            velocity = { x: 0, y: 1 }; // Default downward velocity
         }
         
-        // Get the direction from the bomb's velocity vector
-        let directionX = 1; // Default right direction
-        let directionY = 0;
+        // Get active bomb reference first
+        let activeBomb = null;
         
-        // Use the bomb's velocity to determine drilling direction
-        const velocityMag = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
-        if (velocityMag > 0.1) { // Only use velocity if it's significant
-            // Normalize the velocity vector
-            directionX = velocityX / velocityMag;
-            directionY = velocityY / velocityMag;
-        } else if (block) {
-            // Fallback to collision direction if velocity is too low
-            // Calculate direction from block center to initial impact point
-            const dx = x - block.x;
-            const dy = y - block.y;
-            
-            // Normalize to get direction vector
-            const mag = Math.sqrt(dx * dx + dy * dy);
-            if (mag > 0) {
-                directionX = dx / mag;
-                directionY = dy / mag;
-            }
+        // Check both possible bomb references (BombLauncher or direct)
+        if (this.scene.bombLauncher && this.scene.bombLauncher.bomb) {
+            activeBomb = this.scene.bombLauncher.bomb;
+            console.log("Using bombLauncher.bomb for driller");
+        } else if (this.scene.bomb) {
+            activeBomb = this.scene.bomb;
+            console.log("Using scene.bomb for driller");
         }
         
-        // Create a driller bomb object with needed properties
-        return {
-            x: x,
-            y: y,
-            velocityX: velocityX,
-            velocityY: velocityY,
-            directionX: directionX,
-            directionY: directionY,
-            drillerEffect: drillerEffect,
-            particles: particles,
-            emitter: emitter,
-            bombSprite: bombSprite
-        };
+        // Store velocity directly on the active bomb if possible
+        if (activeBomb) {
+            // Save the velocity information on the bomb itself
+            activeBomb.storedVelocityX = velocity.x;
+            activeBomb.storedVelocityY = velocity.y;
+            activeBomb.isDriller = true;
+            activeBomb.hasExploded = false; // Ensure it's not marked as exploded
+            
+            console.log(`Stored velocity on bomb: ${velocity.x}, ${velocity.y}`);
+        }
+        
+        // Forward to the scene's implementation for consistent handling
+        if (this.scene.handleDrillerBomb) {
+            return this.scene.handleDrillerBomb(x, y, block);
+        } else {
+            console.error("Scene does not have handleDrillerBomb method, cannot process driller bomb");
+            return null;
+        }
     }
     
     // Create a small fizzle effect when a bomb misses
@@ -518,111 +515,107 @@ class BombUtils {
     
     // Create a driller explosion effect
     createDrillerExplosion(x, y) {
-        // Create a larger explosion effect for driller bombs with distinct visuals
-        const explosion = this.scene.add.circle(x, y, 140, 0xBB5500, 0.8);
+        // Large explosion for driller bombs when triggered
+        const explosion = this.scene.add.circle(x, y, 150, 0xBB5500, 0.8);
         explosion.setDepth(6);
         
         // Animate the explosion
         this.scene.tweens.add({
             targets: explosion,
             alpha: 0,
-            scale: 3.5, // Larger scale for more impressive explosion
-            duration: 600, // Longer duration
+            scale: 3,
+            duration: 800,
             ease: 'Power2',
             onComplete: () => {
                 explosion.destroy();
             }
         });
         
-        // Add drilling debris particles
+        // Add particles for a bigger effect
         const particles = this.scene.add.particles('particle');
         particles.setDepth(6);
         
         const emitter = particles.createEmitter({
-            speed: { min: 100, max: 300 }, // Faster particles
-            scale: { start: 1.8, end: 0 }, // Larger particles
+            speed: { min: 100, max: 300 },
+            scale: { start: 2, end: 0 },
             alpha: { start: 1, end: 0 },
             lifespan: 1200,
             blendMode: 'ADD',
-            tint: [0xBB5500, 0xFF9900, 0xFFCC00] // Brown/orange/yellow for drill explosion
+            tint: 0xBB5500
         });
         
         // Emit more particles
-        emitter.explode(80, x, y);
+        emitter.explode(60, x, y);
         
-        // Add a flash effect
-        const flash = this.scene.add.circle(x, y, 180, 0xffffff, 1);
+        // Add a larger flash effect
+        const flash = this.scene.add.circle(x, y, 200, 0xffffff, 1);
         flash.setDepth(6);
         this.scene.tweens.add({
             targets: flash,
             alpha: 0,
-            duration: 300,
+            scale: 2,
+            duration: 200,
+            ease: 'Power2',
             onComplete: () => {
                 flash.destroy();
             }
         });
         
-        // Add secondary ring blast
-        const ring = this.scene.add.circle(x, y, 10, 0xFF9900, 0.7);
-        ring.setStrokeStyle(4, 0xBB5500, 1);
-        ring.setDepth(6);
-        this.scene.tweens.add({
-            targets: ring,
-            scale: 30,
-            alpha: 0,
-            duration: 800,
-            onComplete: () => {
-                ring.destroy();
-            }
-        });
+        // Destroy blocks in a wider radius
+        this.scene.destroyBlocksInRadius(x, y, 180);
         
-        // Clean up particles after use
-        this.scene.time.delayedCall(1200, () => {
-            particles.destroy();
-        });
-        
-        // Add a stronger camera shake
-        this.scene.cameras.main.shake(500, 0.02);
-        
-        // Add explosion sound with lower pitch for bigger boom
+        // Play an explosion sound if available
         if (this.scene.sound && this.scene.sound.add) {
             try {
                 const explosionSound = this.scene.sound.add('explosion');
-                explosionSound.play({ volume: 0.7, rate: 0.5 });
+                explosionSound.play({ volume: 0.6 });
             } catch (e) {
-                console.log("Sound not available:", e);
+                console.log("Explosion sound not available:", e);
             }
+        }
+        
+        // Camera shake for impact
+        if (this.scene.cameras && this.scene.cameras.main) {
+            this.scene.cameras.main.shake(300, 0.02);
         }
     }
     
     // Create a drill dust effect when a driller bomb drills through a block
     createDrillEffect(x, y) {
-        // Create a drill dust effect
+        // Small particles for drilling effect
         const particles = this.scene.add.particles('particle');
         particles.setDepth(6);
         
-        // Create the emitter for debris
         const emitter = particles.createEmitter({
-            speed: { min: 30, max: 80 },
-            scale: { start: 0.4, end: 0 },
+            speed: { min: 50, max: 150 },
+            scale: { start: 0.5, end: 0 },
             alpha: { start: 0.8, end: 0 },
-            lifespan: 500,
+            lifespan: 600,
             blendMode: 'ADD',
-            tint: [0xBB5500, 0xCCCCCC], // Brown/orange and gray for drill dust
+            tint: 0xBB7722
         });
         
-        // Emit a burst of particles
-        emitter.explode(10, x, y);
+        // Emit particles at drill position
+        emitter.explode(15, x, y);
         
-        // Clean up after use
-        this.scene.time.delayedCall(500, () => {
+        // Add a small burst flash
+        const flash = this.scene.add.circle(x, y, 30, 0xBB5500, 0.7);
+        flash.setDepth(5);
+        this.scene.tweens.add({
+            targets: flash,
+            alpha: 0,
+            scale: 2,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => {
+                flash.destroy();
+            }
+        });
+        
+        // Destroy the particle system after emissions complete
+        this.scene.time.delayedCall(600, () => {
             particles.destroy();
         });
-        
-        // Add a small camera shake for drilling feedback
-        this.scene.cameras.main.shake(100, 0.003);
-        
-        return particles;
     }
     
     // Create a bounce trail effect for bombs bounced off bouncy blocks

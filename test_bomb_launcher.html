@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bomb Launcher Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid white;
+        }
+    </style>
+</head>
+<body>
+    <script src="js/BombLauncher.js"></script>
+    <script>
+        class SimpleBombScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'SimpleBombScene' });
+                
+                // Constants from GameScene
+                this.BOW_X = 300;
+                this.BOW_Y = 540;
+                this.MAX_DRAG_DISTANCE = 200;
+                this.SHOT_POWER = 0.13;
+                this.debugMode = true;
+                this.isAiming = false;
+                
+                // State tracking
+                this.bombState = {
+                    active: false,
+                    lastResetTime: 0,
+                    lastBombFired: 0,
+                    pendingReset: null,
+                    slowStartTime: null
+                };
+            }
+            
+            preload() {
+                // Load required assets
+                this.load.image('bomb', 'assets/images/bombs/blast_bomb.png');
+                this.load.image('particle', 'assets/images/bombs/particle.png');
+                this.load.audio('launch', 'assets/audio/launch.mp3');
+                this.load.audio('fizzle', 'assets/audio/fizzle.mp3');
+            }
+            
+            create() {
+                console.log('SimpleBombScene created');
+                
+                // Setup the matter physics world
+                this.matter.world.setBounds(0, 0, 1920, 1080);
+                this.matter.world.setGravity(0, 1);
+                
+                // Create the bow
+                this.createBow();
+                
+                // Create the BombLauncher
+                this.bombLauncher = new BombLauncher(this);
+                
+                // Create initial bomb
+                this.bombLauncher.createBomb('bomb');
+                
+                // Setup input
+                this.setupInput();
+                
+                // Debug text
+                this.debugText = this.add.text(10, 10, 'Drag the bomb and release to launch', { 
+                    font: '16px Arial', 
+                    fill: '#ffffff' 
+                });
+                
+                // Info text
+                this.add.text(10, 1050, 'Bomb Launcher Test - Drag to aim and release to fire', {
+                    font: '16px Arial',
+                    fill: '#ffffff'
+                });
+            }
+            
+            createBow() {
+                try {
+                    // Create a silver bow shape using graphics
+                    const bowGraphics = this.add.graphics();
+                    
+                    // Silver color with slight gradient
+                    const silverColor = 0xC0C0C0;
+                    const darkSilver = 0x909090;
+                    
+                    // Create bow arc
+                    bowGraphics.lineStyle(5, silverColor, 1);
+                    bowGraphics.beginPath();
+                    // Draw a semicircle arc for the bow
+                    bowGraphics.arc(0, 0, 40, Phaser.Math.DegToRad(150), Phaser.Math.DegToRad(390), false);
+                    bowGraphics.strokePath();
+                    
+                    // Add some details to make it look like a bow
+                    bowGraphics.lineStyle(3, darkSilver, 1);
+                    // Bow grip (middle part)
+                    bowGraphics.fillStyle(darkSilver, 1);
+                    bowGraphics.fillRect(-5, -10, 10, 20);
+                    
+                    // Generate a texture from the graphics
+                    bowGraphics.generateTexture('bow', 100, 100);
+                    bowGraphics.clear();
+                    
+                    // Create the bow image using the generated texture
+                    this.bow = this.add.image(this.BOW_X, this.BOW_Y, 'bow');
+                    this.bow.setOrigin(0.5, 0.5);
+                    this.bow.setDepth(10); // Above all game elements but below UI
+                    
+                    // Add bowstring (elastic line)
+                    this.elasticLine = this.add.graphics();
+                    this.elasticLine.setDepth(11); // Above bow
+                    
+                    // Draw the default bowstring (a straight line when not pulled)
+                    this.elasticLine.lineStyle(2, 0xFFFFFF, 0.8); // White, slightly transparent
+                    this.elasticLine.beginPath();
+                    this.elasticLine.moveTo(this.BOW_X, this.BOW_Y - 40); // Top of bow
+                    this.elasticLine.lineTo(this.BOW_X, this.BOW_Y + 40); // Bottom of bow
+                    this.elasticLine.stroke();
+                    
+                } catch (error) {
+                    console.error("Error in createBow:", error);
+                }
+            }
+            
+            setupInput() {
+                // Pointer down event
+                this.input.on('pointerdown', (pointer) => {
+                    try {
+                        if (!this.bombLauncher.bomb) return;
+                        
+                        const touchRadius = 50;
+                        const distance = Phaser.Math.Distance.Between(
+                            pointer.x, pointer.y,
+                            this.bombLauncher.bomb.x, this.bombLauncher.bomb.y
+                        );
+                        
+                        if (distance < touchRadius) {
+                            this.bombLauncher.bomb.setTint(0xffff00);
+                            this.isAiming = true;
+                        }
+                    } catch (error) {
+                        console.error('Error in pointerdown:', error);
+                    }
+                });
+                
+                // Pointer move event
+                this.input.on('pointermove', (pointer) => {
+                    try {
+                        if (!this.isAiming) return;
+                        
+                        this.bombLauncher.updateBombPosition(pointer);
+                        this.debugText.setText(`Aiming: (${pointer.x.toFixed(0)}, ${pointer.y.toFixed(0)})`);
+                    } catch (error) {
+                        console.error('Error in pointermove:', error);
+                    }
+                });
+                
+                // Pointer up event
+                this.input.on('pointerup', (pointer) => {
+                    try {
+                        if (!this.isAiming) return;
+                        
+                        this.isAiming = false;
+                        
+                        // Clear tint on bomb
+                        if (this.bombLauncher.bomb) {
+                            this.bombLauncher.bomb.clearTint();
+                        }
+                        
+                        const launched = this.bombLauncher.launchBomb(pointer);
+                        
+                        if (launched) {
+                            this.debugText.setText(`Launched bomb`);
+                            
+                            // Play sound effect
+                            this.sound.play('launch');
+                            
+                            // Set a timer to reset the bomb after 5 seconds
+                            this.time.delayedCall(5000, () => {
+                                if (this.bombLauncher.bomb && this.bombLauncher.bomb.isLaunched) {
+                                    this.resetBomb();
+                                }
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error in pointerup:', error);
+                    }
+                });
+            }
+            
+            resetBomb() {
+                this.bombLauncher.createBomb('bomb');
+                this.debugText.setText('Bomb reset - ready to fire');
+            }
+            
+            createFizzleEffect(x, y) {
+                try {
+                    // Create a particle emitter for the fizzle effect
+                    const particles = this.add.particles('particle');
+                    
+                    const emitter = particles.createEmitter({
+                        x: x,
+                        y: y,
+                        speed: { min: 50, max: 150 },
+                        angle: { min: 0, max: 360 },
+                        scale: { start: 0.6, end: 0 },
+                        alpha: { start: 0.8, end: 0 },
+                        blendMode: 'ADD',
+                        lifespan: 800,
+                        gravityY: 100,
+                        quantity: 15,
+                        tint: [0xffff00, 0xff0000, 0xffffff]
+                    });
+                    
+                    // Play a sound effect if available
+                    this.sound.play('fizzle');
+                    
+                    // Set the emitter to emit all particles at once, then stop
+                    emitter.explode(20, x, y);
+                    
+                    // Destroy the particle system after emissions complete
+                    this.time.delayedCall(1000, () => {
+                        particles.destroy();
+                    });
+                } catch (error) {
+                    console.error("Error creating fizzle effect:", error);
+                }
+            }
+            
+            update(time, delta) {
+                // Check if bomb is out of bounds
+                if (this.bombLauncher && this.bombLauncher.bomb && this.bombLauncher.bomb.isLaunched) {
+                    const bomb = this.bombLauncher.bomb;
+                    
+                    // Check if bomb is outside camera bounds
+                    if (bomb.x < 0 || bomb.x > this.cameras.main.width ||
+                        bomb.y < 0 || bomb.y > this.cameras.main.height) {
+                        
+                        // Create a small visual effect where the bomb exited
+                        this.createFizzleEffect(
+                            Phaser.Math.Clamp(bomb.x, 10, this.cameras.main.width - 10),
+                            Phaser.Math.Clamp(bomb.y, 10, this.cameras.main.height - 10)
+                        );
+                        
+                        // Reset the bomb
+                        this.resetBomb();
+                    }
+                }
+            }
+        }
+        
+        // Game configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 1920,
+            height: 1080,
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: Phaser.Scale.CENTER_BOTH
+            },
+            physics: {
+                default: 'matter',
+                matter: {
+                    debug: false,
+                    gravity: { y: 1 }
+                }
+            },
+            scene: [SimpleBombScene]
+        };
+        
+        // Create the game instance
+        const game = new Phaser.Game(config);
+    </script>
+</body>
+</html> 
